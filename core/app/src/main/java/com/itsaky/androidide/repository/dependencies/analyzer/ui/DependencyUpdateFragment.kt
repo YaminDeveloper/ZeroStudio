@@ -14,11 +14,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -27,8 +30,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -157,14 +158,7 @@ fun DependencyUpdateScreen(
     DependencyFilter.ALL -> reports
   }
 
-  Scaffold(
-      topBar = {
-        TopAppBar(
-            title = { Text("Dependencies") },
-            actions = { TextButton(onClick = { refresh() }) { Text("Rescan") } }
-        )
-      }
-  ) { innerPadding ->
+  Scaffold { innerPadding ->
     when {
       isLoading -> LoadingState(innerPadding)
       errorMessage != null -> ErrorState(innerPadding, errorMessage ?: "Unknown error", onRetry = { refresh() })
@@ -294,11 +288,11 @@ private fun DependencyListState(
 
 @Composable
 private fun DependencyUpdateItem(report: UpdateReport, onApplyClicked: (UpdateReport, String) -> Unit) {
-  var selectedVersion by remember(report.dependency.gav) { mutableStateOf(report.latestVersion) }
+  var selectedVersion by remember(report.dependency.gav) { mutableStateOf(report.dependency.version) }
+  var menuExpanded by remember(report.dependency.gav) { mutableStateOf(false) }
   val versions = remember(report.availableVersions) {
-    report.availableVersions.distinct().ifEmpty { listOf(report.dependency.version) }
+    (report.availableVersions + report.dependency.version).distinct().ifEmpty { listOf(report.dependency.version) }
   }
-  val hasUpdate = report.latestVersion != report.dependency.version
 
   Card(modifier = Modifier.fillMaxWidth()) {
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
@@ -313,29 +307,39 @@ private fun DependencyUpdateItem(report: UpdateReport, onApplyClicked: (UpdateRe
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant
       )
-      Spacer(modifier = Modifier.height(10.dp))
-
-      LazyColumn(modifier = Modifier.fillMaxWidth().height(120.dp)) {
-        items(versions) { version ->
-          TextButton(onClick = { selectedVersion = version }, modifier = Modifier.fillMaxWidth()) {
-            Text(
-                text = version,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Start,
-                fontWeight = if (version == selectedVersion) FontWeight.Bold else FontWeight.Normal
-            )
+      Spacer(modifier = Modifier.height(12.dp))
+      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Box {
+          OutlinedButton(onClick = { menuExpanded = true }) { Text(selectedVersion) }
+          DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+            versions.forEach { version ->
+              val isCurrentVersion = version == report.dependency.version
+              DropdownMenuItem(
+                  text = {
+                    Text(
+                        text = version,
+                        modifier =
+                            Modifier.fillMaxWidth()
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .then(
+                                    if (isCurrentVersion) {
+                                      Modifier
+                                          .padding(0.dp)
+                                          .background(MaterialTheme.colorScheme.secondaryContainer)
+                                    } else {
+                                      Modifier
+                                    }
+                                ),
+                        fontWeight = if (version == selectedVersion) FontWeight.SemiBold else FontWeight.Normal
+                    )
+                  },
+                  onClick = {
+                    selectedVersion = version
+                    menuExpanded = false
+                    onApplyClicked(report, selectedVersion)
+                  })
+            }
           }
-        }
-      }
-
-      Spacer(modifier = Modifier.height(8.dp))
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { selectedVersion = report.latestVersion }) { Text("Use latest") }
-        Button(
-            onClick = { onApplyClicked(report, selectedVersion) },
-            enabled = hasUpdate || selectedVersion != report.dependency.version
-        ) {
-          Text("Apply")
         }
       }
     }
