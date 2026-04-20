@@ -27,7 +27,34 @@ import com.itsaky.androidide.lsp.api.ILanguageServer
 import com.itsaky.androidide.lsp.api.IServerSettings
 import com.itsaky.androidide.lsp.kotlin.actions.KotlinLspActionsProvider
 import com.itsaky.androidide.lsp.kotlin.events.KotlinTextDocumentSyncHandler
-import com.itsaky.androidide.lsp.models.*
+import com.itsaky.androidide.lsp.models.CodeFormatResult
+import com.itsaky.androidide.lsp.models.CompletionItemKind
+import com.itsaky.androidide.lsp.models.CompletionParams
+import com.itsaky.androidide.lsp.models.CompletionResult
+import com.itsaky.androidide.lsp.models.DefinitionParams
+import com.itsaky.androidide.lsp.models.DefinitionResult
+import com.itsaky.androidide.lsp.models.DiagnosticItem
+import com.itsaky.androidide.lsp.models.DiagnosticResult
+import com.itsaky.androidide.lsp.models.DiagnosticSeverity
+import com.itsaky.androidide.lsp.models.DidChangeTextDocumentParams
+import com.itsaky.androidide.lsp.models.DidCloseTextDocumentParams
+import com.itsaky.androidide.lsp.models.DidOpenTextDocumentParams
+import com.itsaky.androidide.lsp.models.DidSaveTextDocumentParams
+import com.itsaky.androidide.lsp.models.DocumentChange
+import com.itsaky.androidide.lsp.models.ExpandSelectionParams
+import com.itsaky.androidide.lsp.models.FormatCodeParams
+import com.itsaky.androidide.lsp.models.MarkupContent
+import com.itsaky.androidide.lsp.models.MarkupKind
+import com.itsaky.androidide.lsp.models.MatchLevel
+import com.itsaky.androidide.lsp.models.MessageType
+import com.itsaky.androidide.lsp.models.ReferenceParams
+import com.itsaky.androidide.lsp.models.ReferenceResult
+import com.itsaky.androidide.lsp.models.RenameParams
+import com.itsaky.androidide.lsp.models.ShowMessageParams
+import com.itsaky.androidide.lsp.models.SignatureHelp
+import com.itsaky.androidide.lsp.models.SignatureHelpParams
+import com.itsaky.androidide.lsp.models.TextEdit
+import com.itsaky.androidide.lsp.models.WorkspaceEdit
 import com.itsaky.androidide.lsp.util.LSPEditorActions
 import com.itsaky.androidide.models.Location
 import com.itsaky.androidide.models.Position
@@ -41,7 +68,31 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import org.eclipse.lsp4j.*
+import org.eclipse.lsp4j.ApplyWorkspaceEditParams
+import org.eclipse.lsp4j.ApplyWorkspaceEditResponse
+import org.eclipse.lsp4j.ClientCapabilities
+import org.eclipse.lsp4j.CompletionCapabilities
+import org.eclipse.lsp4j.DidChangeConfigurationParams
+import org.eclipse.lsp4j.DocumentFormattingParams
+import org.eclipse.lsp4j.ExecuteCommandCapabilities
+import org.eclipse.lsp4j.ExecuteCommandParams
+import org.eclipse.lsp4j.FormattingOptions
+import org.eclipse.lsp4j.HoverCapabilities
+import org.eclipse.lsp4j.HoverParams
+import org.eclipse.lsp4j.InitializedParams
+import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.MessageActionItem
+import org.eclipse.lsp4j.MessageParams
+import org.eclipse.lsp4j.PublishDiagnosticsParams
+import org.eclipse.lsp4j.ReferenceContext
+import org.eclipse.lsp4j.ShowMessageRequestParams
+import org.eclipse.lsp4j.SignatureHelpCapabilities
+import org.eclipse.lsp4j.TextDocumentClientCapabilities
+import org.eclipse.lsp4j.TextDocumentIdentifier
+import org.eclipse.lsp4j.TextDocumentItem
+import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
+import org.eclipse.lsp4j.WorkspaceClientCapabilities
+import org.eclipse.lsp4j.WorkspaceFolder
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
 import java.io.File
@@ -177,7 +228,6 @@ class KotlinLanguageServerImpl(
                     completion = CompletionCapabilities(CompletionItemCapabilities(true))
                     hover = HoverCapabilities()
                     signatureHelp = SignatureHelpCapabilities()
-                    formatting = DocumentFormattingCapabilities()
                 }
                 this.workspace = WorkspaceClientCapabilities().apply {
                     executeCommand = ExecuteCommandCapabilities(true)
@@ -416,7 +466,7 @@ class KotlinLanguageServerImpl(
                 lspServer.exit()
             }
         } catch (e: Exception) {
-            log.warn("Error during LSP shutdown", e)
+            log.warn("Error during LSP shutdown: ${e.message}")
         } finally {
             try {
                 process.destroy()
