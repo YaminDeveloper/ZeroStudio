@@ -204,9 +204,18 @@ class TomlCatalogParser {
 
           val id = properties["id"]?.first
           val versionRef = properties["version.ref"]?.first
+          val versionLiteral = properties["version"]?.first
+          val versionRange = properties["version"]?.second
 
           if (id != null) {
-            plugins[alias] = CatalogPlugin(alias, id, versionRef)
+            plugins[alias] =
+                CatalogPlugin(
+                    alias = alias,
+                    id = id,
+                    versionRef = versionRef,
+                    versionLiteral = versionLiteral,
+                    textRange = versionRange,
+                )
           }
         }
       }
@@ -232,11 +241,37 @@ class TomlCatalogParser {
           val clean = cleanString(raw)
           val range = TextRange(stringCtx.start.startIndex, stringCtx.stop.stopIndex + 1)
           result[key] = Pair(clean, range)
+        } else if (valCtx.inline_table() != null) {
+          collectNestedInlineProperties(key, valCtx.inline_table(), result)
         }
 
         current = current.inline_table_keyvals_non_empty()
       }
       return result
+    }
+
+    private fun collectNestedInlineProperties(
+        prefix: String,
+        inlineTableCtx: TomlParser.Inline_tableContext,
+        out: MutableMap<String, Pair<String, TextRange>>,
+    ) {
+      var current = inlineTableCtx.inline_table_keyvals()?.inline_table_keyvals_non_empty()
+      while (current != null) {
+        val key = cleanKey(current.key().text)
+        val combinedKey = "$prefix.$key"
+        val valueCtx = current.value()
+        val stringCtx = valueCtx.string()
+
+        if (stringCtx != null) {
+          val raw = stringCtx.text
+          val clean = cleanString(raw)
+          out[combinedKey] = Pair(clean, TextRange(stringCtx.start.startIndex, stringCtx.stop.stopIndex + 1))
+        } else if (valueCtx.inline_table() != null) {
+          collectNestedInlineProperties(combinedKey, valueCtx.inline_table(), out)
+        }
+
+        current = current.inline_table_keyvals_non_empty()
+      }
     }
 
     private fun cleanKey(key: String): String {

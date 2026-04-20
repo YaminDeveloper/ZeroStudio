@@ -23,6 +23,7 @@ class GroovyAstAnalyzer : ScriptAnalyzer {
     if (!file.exists()) return Pair(repos, deps)
 
     val text = file.readText()
+    val versionVariables = extractVersionVariables(text)
     val lexer = GroovyLexer(CharStreams.fromString(text))
 
     // 获取所有 Token，并过滤掉无意义的空白符
@@ -149,10 +150,19 @@ class GroovyAstAnalyzer : ScriptAnalyzer {
               val parts = cleanStr.split(":")
 
               if (parts.size >= 3) {
-                val version = parts[2]
-                // 提取版本号在文件中的绝对偏移量
-                // 使用 lastIndexOf 确保定位到的是版本号部分
-                val verStart = gavToken.startIndex + rawStr.lastIndexOf(version)
+                val rawVersion = parts[2]
+                val variableName =
+                    Regex("""^\$(\w+)$|^\$\{(\w+)}$""")
+                        .matchEntire(rawVersion)
+                        ?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }
+                val variable = variableName?.let { versionVariables[it] }
+                val version = variable?.first ?: rawVersion
+                val versionRange =
+                    variable?.second
+                        ?: run {
+                          val verStart = gavToken.startIndex + rawStr.lastIndexOf(rawVersion)
+                          TextRange(verStart, verStart + rawVersion.length)
+                        }
 
                 deps.add(
                     ScopedDependencyInfo(
@@ -163,7 +173,7 @@ class GroovyAstAnalyzer : ScriptAnalyzer {
                         declaredFile = file,
                         declarationType = DeclarationType.STRING_LITERAL,
                         // 精确记录版本号的位置 Range
-                        versionDefinitionRange = TextRange(verStart, verStart + version.length),
+                        versionDefinitionRange = versionRange,
                         statementTextRange = TextRange(token.startIndex, gavToken.stopIndex + 1),
                     )
                 )
@@ -235,5 +245,20 @@ class GroovyAstAnalyzer : ScriptAnalyzer {
       i++
     }
     return Pair(repos, deps)
+  }
+
+  private fun extractVersionVariables(text: String): Map<String, Pair<String, TextRange>> {
+    val result = mutableMapOf<String, Pair<String, TextRange>>()
+    val pattern =
+        Regex(
+            """(?m)^\s*(?:def\s+|final\s+|ext\.)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*['"]([^'"]+)['"]\s*$"""
+        )
+    pattern.findAll(text).forEach { match ->
+      val name = match.groupValues[1]
+      val value = match.groupValues[2]
+      val start = match.range.first + match.value.indexOf(value)
+      result[name] = value to TextRange(start, start + value.length)
+    }
+    return result
   }
 }
