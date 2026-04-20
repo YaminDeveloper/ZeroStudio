@@ -48,6 +48,7 @@ import com.itsaky.androidide.projects.IProjectManager
 import com.itsaky.androidide.repository.dependencies.analyzer.ProjectAnalyzer
 import com.itsaky.androidide.repository.dependencies.analyzer.impl.GradleProjectAnalyzerImpl
 import com.itsaky.androidide.repository.dependencies.analyzer.internal.DependencyUpdater
+import com.itsaky.androidide.repository.dependencies.models.datas.ScopedDependencyInfo
 import com.itsaky.androidide.repository.dependencies.models.datas.UpdateReport
 import com.itsaky.androidide.utils.flashError
 import com.itsaky.androidide.utils.flashSuccess
@@ -93,13 +94,15 @@ fun DependencyUpdateScreen(
   var reports by remember { mutableStateOf<List<UpdateReport>>(emptyList()) }
   var isLoading by remember { mutableStateOf(false) }
   var errorMessage by remember { mutableStateOf<String?>(null) }
-  var filter by rememberSaveable { mutableStateOf(DependencyFilter.ONLY_OUTDATED) }
+  var warningMessage by remember { mutableStateOf<String?>(null) }
+  var filter by rememberSaveable { mutableStateOf(DependencyFilter.ALL) }
   val coroutineScope = rememberCoroutineScope()
 
   fun refreshData() {
     coroutineScope.launch {
       isLoading = true
       errorMessage = null
+      warningMessage = null
       try {
         val workspace = IProjectManager.getInstance().getWorkspace()
         val projectDir = workspace?.getProjectDir()
@@ -109,9 +112,38 @@ fun DependencyUpdateScreen(
           return@launch
         }
 
-        val repos = analyzer.extractRepositories(projectDir)
         val deps = analyzer.extractDependencies(projectDir)
-        reports = analyzer.checkUpdates(deps, repos).sortedBy { it.dependency.gav }
+        val scopedDeps = deps.filterIsInstance<ScopedDependencyInfo>().distinctBy { it.gav }
+        val fallbackReports =
+            scopedDeps.map { dep ->
+              UpdateReport(
+                  dependency = dep,
+                  latestVersion = dep.version,
+                  availableVersions = listOf(dep.version),
+              )
+            }
+
+        reports = fallbackReports
+
+        if (scopedDeps.isNotEmpty()) {
+          try {
+            val repos = analyzer.extractRepositories(projectDir)
+            val updates = analyzer.checkUpdates(scopedDeps, repos).associateBy { it.dependency.gav }
+            reports =
+                fallbackReports.map { base ->
+                  updates[base.dependency.gav] ?: base
+                }
+          } catch (updateError: Exception) {
+            warningMessage =
+                "Loaded project dependencies, but update metadata check failed: " +
+                    (updateError.message ?: "unknown error")
+          }
+        } else {
+          warningMessage =
+              "No dependencies parsed from Gradle DSL/TOML. Check settings.gradle and libs.versions.toml mapping."
+        }
+
+        reports = reports.sortedBy { it.dependency.gav }
       } catch (e: Exception) {
         reports = emptyList()
         errorMessage = e.message ?: "Unknown error while loading dependencies."
@@ -153,6 +185,7 @@ fun DependencyUpdateScreen(
               reports = filteredReports,
               totalCount = reports.size,
               filter = filter,
+              warningMessage = warningMessage,
               onFilterChange = { filter = it },
               onApplyClicked = { report, selectedVersion ->
                 if (selectedVersion == report.dependency.version) {
@@ -222,6 +255,7 @@ private fun DependencyListState(
     reports: List<UpdateReport>,
     totalCount: Int,
     filter: DependencyFilter,
+    warningMessage: String?,
     onFilterChange: (DependencyFilter) -> Unit,
     onApplyClicked: (UpdateReport, String) -> Unit,
 ) {
@@ -239,6 +273,22 @@ private fun DependencyListState(
           selected = filter == DependencyFilter.ALL,
           onClick = { onFilterChange(DependencyFilter.ALL) },
           label = { Text("All ($totalCount)") },
+      )
+    }
+
+    if (!warningMessage.isNullOrBlank()) {
+      Text(
+          text = warningMessage,
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.error,
+      )
+    } else {
+      Text(
+          text = "Detected dependencies: $totalCount",
+          modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
     }
 
