@@ -337,7 +337,7 @@ class KotlinLanguageServerImpl(
                 val contentStr = params.content?.toString() ?: ""
                 val prefix = extractPrefix(contentStr, params.position)
                 
-                val enhancedItems = completionConverter.convertWithClasspathEnhancement(itemsJsonArray, contentStr, prefix)
+                val enhancedItems = completionConverter.convertWithClasspathEnhancement(items, contentStr, prefix)
                 
                 enhancedItems.forEach {
                     it.completionKind = it.completionKind ?: CompletionItemKind.NONE
