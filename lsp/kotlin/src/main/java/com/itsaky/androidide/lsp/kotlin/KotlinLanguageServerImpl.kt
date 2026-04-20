@@ -120,6 +120,8 @@ class KotlinLanguageServerImpl(
 
     @Volatile
     private var isInitialized = false
+    @Volatile
+    private var lastInitError: String? = null
     private val gson = Gson()
     private val completionConverter = KotlinCompletionConverter()
 
@@ -190,6 +192,10 @@ class KotlinLanguageServerImpl(
         this.lspServer = remoteServer
     }
 
+    fun isReady(): Boolean = isInitialized
+
+    fun getLastInitError(): String? = lastInitError
+
     private fun requireServer(): LanguageServer {
         check(::lspServer.isInitialized) { "Kotlin LSP remote server is not bound yet." }
         return lspServer
@@ -256,10 +262,12 @@ class KotlinLanguageServerImpl(
                 requireServer().initialize(initParams).await()
                 requireServer().initialized(InitializedParams())
                 isInitialized = true
+                lastInitError = null
                 KotlinTextDocumentSyncHandler.onServerReady()
                 log.info("LSP4J Kotlin Server Initialized Successfully.")
             } catch (e: Exception) {
                 isInitialized = false
+                lastInitError = e.message
                 log.error("Failed to initialize Kotlin LSP via LSP4J", e)
             }
         }

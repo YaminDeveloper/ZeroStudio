@@ -139,6 +139,17 @@ class KotlinServerProcessManager(private val context: Context) {
                 environment().apply {
                     put("JAVA_HOME", Environment.JAVA_HOME.absolutePath)
                     put("PATH", "${Environment.BIN_DIR.absolutePath}:${Environment.JAVA_HOME.absolutePath}/bin:${System.getenv("PATH")}")
+                    val javaToolOptions =
+                        listOf(
+                                get("JAVA_TOOL_OPTIONS"),
+                                "-Dsqlite.purejava=true",
+                                "-Dorg.sqlite.tmpdir=${context.cacheDir.absolutePath}",
+                            )
+                            .filterNotNull()
+                            .joinToString(" ")
+                            .trim()
+                    put("JAVA_TOOL_OPTIONS", javaToolOptions)
+                    put("ORG_SQLITE_PUREJAVA", "true")
                     // 传递环境变量使 Server 使用我们在外部计算的 Classpath
                     put("KOTLIN_LSP_DISABLE_DEPENDENCY_RESOLUTION", "true")
                     put("KOTLIN_LSP_USE_PREDEFINED_CLASSPATH", "true")
@@ -199,8 +210,15 @@ class KotlinServerProcessManager(private val context: Context) {
                 val workspace = IProjectManager.getInstance().getWorkspace()
                 if (workspace != null) {
                     currentServerImpl?.setupWorkspace(workspace)
-                    currentServerImpl?.applySettings(KotlinServerSettings())
-                    log.info("Kotlin LSP workspace has been initialized and synchronized via LSP4J.")
+                    if (currentServerImpl?.isReady() == true) {
+                        currentServerImpl?.applySettings(KotlinServerSettings())
+                        log.info("Kotlin LSP workspace has been initialized and synchronized via LSP4J.")
+                    } else {
+                        log.warn(
+                            "Kotlin LSP workspace binding attempted, but server initialization failed: {}",
+                            currentServerImpl?.getLastInitError() ?: "unknown error"
+                        )
+                    }
                     return@launch
                 }
                 if (attempt < 19) {
