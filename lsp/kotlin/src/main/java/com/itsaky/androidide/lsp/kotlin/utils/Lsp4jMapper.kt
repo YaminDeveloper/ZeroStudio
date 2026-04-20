@@ -6,10 +6,10 @@ package com.itsaky.androidide.lsp.kotlin.utils
 import com.itsaky.androidide.lsp.models.CompletionItemKind
 import com.itsaky.androidide.lsp.models.DiagnosticSeverity
 import com.itsaky.androidide.lsp.models.InsertTextFormat
+import com.itsaky.androidide.lsp.models.TextEdit
 import com.itsaky.androidide.models.Position
 import com.itsaky.androidide.models.Range
 import org.eclipse.lsp4j.Diagnostic
-import org.eclipse.lsp4j.TextEdit
 
 /**
  * 核心：AndroidIDE 自定义 LSP 模型与 Eclipse LSP4J 标准模型的双向映射器。

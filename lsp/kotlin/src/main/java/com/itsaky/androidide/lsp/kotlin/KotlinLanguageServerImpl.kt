@@ -27,7 +27,34 @@ import com.itsaky.androidide.lsp.api.ILanguageServer
 import com.itsaky.androidide.lsp.api.IServerSettings
 import com.itsaky.androidide.lsp.kotlin.actions.KotlinLspActionsProvider
 import com.itsaky.androidide.lsp.kotlin.events.KotlinTextDocumentSyncHandler
-import com.itsaky.androidide.lsp.models.*
+import com.itsaky.androidide.lsp.models.CodeFormatResult
+import com.itsaky.androidide.lsp.models.CompletionItemKind
+import com.itsaky.androidide.lsp.models.CompletionParams
+import com.itsaky.androidide.lsp.models.CompletionResult
+import com.itsaky.androidide.lsp.models.DefinitionParams
+import com.itsaky.androidide.lsp.models.DefinitionResult
+import com.itsaky.androidide.lsp.models.DiagnosticItem
+import com.itsaky.androidide.lsp.models.DiagnosticResult
+import com.itsaky.androidide.lsp.models.DiagnosticSeverity
+import com.itsaky.androidide.lsp.models.DidChangeTextDocumentParams
+import com.itsaky.androidide.lsp.models.DidCloseTextDocumentParams
+import com.itsaky.androidide.lsp.models.DidOpenTextDocumentParams
+import com.itsaky.androidide.lsp.models.DidSaveTextDocumentParams
+import com.itsaky.androidide.lsp.models.DocumentChange
+import com.itsaky.androidide.lsp.models.ExpandSelectionParams
+import com.itsaky.androidide.lsp.models.FormatCodeParams
+import com.itsaky.androidide.lsp.models.MarkupContent
+import com.itsaky.androidide.lsp.models.MarkupKind
+import com.itsaky.androidide.lsp.models.MatchLevel
+import com.itsaky.androidide.lsp.models.MessageType
+import com.itsaky.androidide.lsp.models.ReferenceParams
+import com.itsaky.androidide.lsp.models.ReferenceResult
+import com.itsaky.androidide.lsp.models.RenameParams
+import com.itsaky.androidide.lsp.models.ShowMessageParams
+import com.itsaky.androidide.lsp.models.SignatureHelp
+import com.itsaky.androidide.lsp.models.SignatureHelpParams
+import com.itsaky.androidide.lsp.models.TextEdit
+import com.itsaky.androidide.lsp.models.WorkspaceEdit
 import com.itsaky.androidide.lsp.util.LSPEditorActions
 import com.itsaky.androidide.models.Location
 import com.itsaky.androidide.models.Position
@@ -41,7 +68,32 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import org.eclipse.lsp4j.*
+import org.eclipse.lsp4j.ApplyWorkspaceEditParams
+import org.eclipse.lsp4j.ApplyWorkspaceEditResponse
+import org.eclipse.lsp4j.ClientCapabilities
+import org.eclipse.lsp4j.CompletionCapabilities
+import org.eclipse.lsp4j.CompletionItemCapabilities
+import org.eclipse.lsp4j.DidChangeConfigurationParams
+import org.eclipse.lsp4j.DocumentFormattingParams
+import org.eclipse.lsp4j.ExecuteCommandCapabilities
+import org.eclipse.lsp4j.ExecuteCommandParams
+import org.eclipse.lsp4j.FormattingOptions
+import org.eclipse.lsp4j.HoverCapabilities
+import org.eclipse.lsp4j.HoverParams
+import org.eclipse.lsp4j.InitializedParams
+import org.eclipse.lsp4j.InitializeParams
+import org.eclipse.lsp4j.MessageActionItem
+import org.eclipse.lsp4j.MessageParams
+import org.eclipse.lsp4j.PublishDiagnosticsParams
+import org.eclipse.lsp4j.ReferenceContext
+import org.eclipse.lsp4j.ShowMessageRequestParams
+import org.eclipse.lsp4j.SignatureHelpCapabilities
+import org.eclipse.lsp4j.TextDocumentClientCapabilities
+import org.eclipse.lsp4j.TextDocumentIdentifier
+import org.eclipse.lsp4j.TextDocumentItem
+import org.eclipse.lsp4j.VersionedTextDocumentIdentifier
+import org.eclipse.lsp4j.WorkspaceClientCapabilities
+import org.eclipse.lsp4j.WorkspaceFolder
 import org.eclipse.lsp4j.services.LanguageClient
 import org.eclipse.lsp4j.services.LanguageServer
 import java.io.File
@@ -57,9 +109,9 @@ import kotlin.coroutines.resumeWithException
  * @author android_zero
  */
 class KotlinLanguageServerImpl(
-    private val process: Process,
-    val lspServer: LanguageServer
+    private val process: Process
 ) : ILanguageServer {
+    private lateinit var lspServer: LanguageServer
 
     override val serverId: String
         get() = SERVER_ID
@@ -68,6 +120,8 @@ class KotlinLanguageServerImpl(
 
     @Volatile
     private var isInitialized = false
+    @Volatile
+    private var lastInitError: String? = null
     private val gson = Gson()
     private val completionConverter = KotlinCompletionConverter()
 
@@ -134,6 +188,19 @@ class KotlinLanguageServerImpl(
 
     val clientEndpoint = ClientEndpoint()
 
+    fun bindRemoteServer(remoteServer: LanguageServer) {
+        this.lspServer = remoteServer
+    }
+
+    fun isReady(): Boolean = isInitialized
+
+    fun getLastInitError(): String? = lastInitError
+
+    private fun requireServer(): LanguageServer {
+        check(::lspServer.isInitialized) { "Kotlin LSP remote server is not bound yet." }
+        return lspServer
+    }
+
     override fun connectClient(client: ILanguageClient?) {
         this.client = client
     }
@@ -154,7 +221,7 @@ class KotlinLanguageServerImpl(
                     )
                 )
             )
-            lspServer.workspaceService.didChangeConfiguration(configParams)
+            requireServer().workspaceService.didChangeConfiguration(configParams)
         }
     }
 
@@ -177,7 +244,6 @@ class KotlinLanguageServerImpl(
                     completion = CompletionCapabilities(CompletionItemCapabilities(true))
                     hover = HoverCapabilities()
                     signatureHelp = SignatureHelpCapabilities()
-                    formatting = DocumentFormattingCapabilities()
                 }
                 this.workspace = WorkspaceClientCapabilities().apply {
                     executeCommand = ExecuteCommandCapabilities(true)
@@ -193,13 +259,15 @@ class KotlinLanguageServerImpl(
 
         runBlocking {
             try {
-                lspServer.initialize(initParams).await()
-                lspServer.initialized(InitializedParams())
+                requireServer().initialize(initParams).await()
+                requireServer().initialized(InitializedParams())
                 isInitialized = true
+                lastInitError = null
                 KotlinTextDocumentSyncHandler.onServerReady()
                 log.info("LSP4J Kotlin Server Initialized Successfully.")
             } catch (e: Exception) {
                 isInitialized = false
+                lastInitError = e.message
                 log.error("Failed to initialize Kotlin LSP via LSP4J", e)
             }
         }
@@ -225,7 +293,7 @@ class KotlinLanguageServerImpl(
     override fun didOpen(params: DidOpenTextDocumentParams) {
         if (!isInitialized) return
         val item = TextDocumentItem(params.file.toUri().toString(), params.languageId, params.version, params.text)
-        lspServer.textDocumentService.didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams(item))
+        requireServer().textDocumentService.didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams(item))
     }
 
     override fun didChange(params: DidChangeTextDocumentParams) {
@@ -235,17 +303,17 @@ class KotlinLanguageServerImpl(
             org.eclipse.lsp4j.TextDocumentContentChangeEvent(it.text) 
         }
         val id = VersionedTextDocumentIdentifier(params.file.toUri().toString(), params.version)
-        lspServer.textDocumentService.didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams(id, changes))
+        requireServer().textDocumentService.didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams(id, changes))
     }
 
     override fun didClose(params: DidCloseTextDocumentParams) {
         if (!isInitialized) return
-        lspServer.textDocumentService.didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString())))
+        requireServer().textDocumentService.didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString())))
     }
 
     override fun didSave(params: DidSaveTextDocumentParams) {
         if (!isInitialized) return
-        lspServer.textDocumentService.didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString()), params.text))
+        requireServer().textDocumentService.didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString()), params.text))
     }
 
     // --- 核心特性实现 ---
@@ -260,7 +328,7 @@ class KotlinLanguageServerImpl(
                     params.position.toLsp4j()
                 )
                 
-                val response = lspServer.textDocumentService.completion(lspParams).await()
+                val response = requireServer().textDocumentService.completion(lspParams).await()
                 val items = if (response.isLeft) response.left else response.right.items
                 
                 // 将 LSP4J 的对象转换为 JsonArray，以复用我们强大的 KotlinCompletionConverter 增强逻辑
@@ -303,7 +371,7 @@ class KotlinLanguageServerImpl(
                 TextDocumentIdentifier(params.file.toUri().toString()),
                 params.position.toLsp4j()
             )
-            val result = lspServer.textDocumentService.definition(req).await()
+            val result = requireServer().textDocumentService.definition(req).await()
             val locations = result.left?.map { 
                 Location(File(java.net.URI(it.uri)).toPath(), it.range.toIde())
             } ?: emptyList()
@@ -322,7 +390,7 @@ class KotlinLanguageServerImpl(
                 this.textDocument = TextDocumentIdentifier(params.file.toUri().toString())
                 this.position = params.position.toLsp4j()
             }
-            val result = lspServer.textDocumentService.references(req).await()
+            val result = requireServer().textDocumentService.references(req).await()
             val locations = result?.map { 
                 Location(File(java.net.URI(it.uri)).toPath(), it.range.toIde())
             } ?: emptyList()
@@ -339,7 +407,7 @@ class KotlinLanguageServerImpl(
                 TextDocumentIdentifier(params.file.toUri().toString()),
                 params.position.toLsp4j()
             )
-            val result = lspServer.textDocumentService.hover(req).await()
+            val result = requireServer().textDocumentService.hover(req).await()
             val content = result?.contents?.left?.firstOrNull()?.left ?: result?.contents?.right?.value ?: ""
             MarkupContent(content, MarkupKind.MARKDOWN)
         } catch (e: Exception) {
@@ -361,7 +429,7 @@ class KotlinLanguageServerImpl(
                     TextDocumentIdentifier("file://dummy_for_format"),
                     FormattingOptions(EditorPreferences.tabSize, !EditorPreferences.useSoftTab)
                 )
-                val edits = lspServer.textDocumentService.formatting(req).await()
+                val edits = requireServer().textDocumentService.formatting(req).await()
                 val ideEdits = edits?.map { it.toIde() }?.toMutableList() ?: mutableListOf()
                 CodeFormatResult(false, ideEdits, mutableListOf())
             } catch (e: Exception) {
@@ -382,7 +450,7 @@ class KotlinLanguageServerImpl(
                 params.position.toLsp4j(),
                 params.newName
             )
-            val result = lspServer.textDocumentService.rename(req).await()
+            val result = requireServer().textDocumentService.rename(req).await()
             
             val ideDocumentChanges = mutableListOf<DocumentChange>()
             result?.changes?.forEach { (uri, edits) ->
@@ -400,7 +468,7 @@ class KotlinLanguageServerImpl(
         if (!isInitialized) return null
         return try {
             val params = ExecuteCommandParams(commandName, arguments)
-            val result = lspServer.workspaceService.executeCommand(params).get()
+            val result = requireServer().workspaceService.executeCommand(params).get()
             gson.toJsonTree(result)
         } catch (e: Exception) {
             log.error("Failed to execute workspace command: $commandName", e)
@@ -412,11 +480,11 @@ class KotlinLanguageServerImpl(
         log.info("Shutting down LSP4J Kotlin Server...")
         try {
             runBlocking {
-                lspServer.shutdown().await()
-                lspServer.exit()
+                requireServer().shutdown().await()
+                requireServer().exit()
             }
         } catch (e: Exception) {
-            log.warn("Error during LSP shutdown", e)
+            log.warn("Error during LSP shutdown: ${e.message}")
         } finally {
             try {
                 process.destroy()
