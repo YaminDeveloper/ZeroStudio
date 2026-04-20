@@ -3,7 +3,6 @@
  */
 package com.itsaky.androidide.repository.dependencies.analyzer.impl
 
-import com.itsaky.androidide.projects.IProjectManager
 import com.itsaky.androidide.repository.dependencies.analyzer.ProjectAnalyzer
 import com.itsaky.androidide.repository.dependencies.analyzer.internal.*
 import com.itsaky.androidide.repository.dependencies.analyzer.network.MavenMetadataFetcher
@@ -22,36 +21,13 @@ class GradleProjectAnalyzerImpl : ProjectAnalyzer {
 
   private val linker = DependencyLinker()
   private val tomlParser = TomlCatalogParser()
+  private val scanner = WorkspaceDependencyScanner(tomlParser = tomlParser, linker = linker)
 
   override suspend fun extractRepositories(projectDir: File): List<ScopedRepositoryInfo> =
       withContext(Dispatchers.IO) {
-        val repos = mutableListOf<ScopedRepositoryInfo>()
-        val workspace =
-            IProjectManager.getInstance().getWorkspace() ?: return@withContext emptyList()
+        val scanResult = scanner.scan(projectDir)
+        val repos = scanResult.repositories.toMutableList()
 
-        //  扫描根项目和所有子项目的构建脚本
-        val allProjects = listOfNotNull(workspace.getRootProject()) + workspace.getSubProjects()
-        allProjects.forEach { project ->
-          val scriptFile = project.buildScript
-          if (scriptFile != null && scriptFile.exists()) {
-            val analyzer = ScriptAnalyzerFactory.create(scriptFile)
-            val (scriptRepos, _) = analyzer.analyze(scriptFile)
-            repos.addAll(scriptRepos)
-          }
-        }
-
-        // 扫描 settings.gradle (用于 pluginManagement)
-        val settingsFile =
-            File(projectDir, "settings.gradle").takeIf { it.exists() }
-                ?: File(projectDir, "settings.gradle.kts").takeIf { it.exists() }
-
-        if (settingsFile != null) {
-          val analyzer = ScriptAnalyzerFactory.create(settingsFile)
-          val (scriptRepos, _) = analyzer.analyze(settingsFile)
-          repos.addAll(scriptRepos.map { it.copy(isPluginRepository = true) })
-        }
-
-        // 添加默认兜底仓库
         repos.add(
             ScopedRepositoryInfo(
                 "google",
@@ -68,7 +44,6 @@ class GradleProjectAnalyzerImpl : ProjectAnalyzer {
                 File(projectDir, "build.gradle"),
             )
         )
-
         repos.add(
             ScopedRepositoryInfo(
                 "mavenCentral",
@@ -78,54 +53,13 @@ class GradleProjectAnalyzerImpl : ProjectAnalyzer {
             )
         )
 
-        return@withContext repos.distinctBy { it.url }
+        repos.distinctBy { it.url }
       }
 
   override suspend fun extractDependencies(projectDir: File): List<DependencyInfo> =
       withContext(Dispatchers.IO) {
-        val allRawDependencies = mutableListOf<ScopedDependencyInfo>()
-        val catalogMap = mutableMapOf<String, VersionCatalog>()
-        val workspace = IProjectManager.getInstance().getWorkspace()
-
-        // 分析 settings.gradle 获取所有版本目录文件
-        val settingsAnalyzer = SettingsDslAnalyzer(projectDir)
-        val catalogFilesMap = settingsAnalyzer.extractCatalogs()
-
-        // 解析所有目录文件
-        catalogFilesMap.forEach { (alias, file) -> catalogMap[alias] = tomlParser.parse(file) }
-
-        //  遍历所有模块，提取原始依赖声明
-        if (workspace != null) {
-          val modules = listOfNotNull(workspace.getRootProject()) + workspace.getSubProjects()
-          modules.forEach { module ->
-            val buildScript = module.buildScript
-            if (buildScript != null && buildScript.exists()) {
-              val analyzer = ScriptAnalyzerFactory.create(buildScript)
-              val (_, scriptDeps) = analyzer.analyze(buildScript)
-              allRawDependencies.addAll(scriptDeps)
-            }
-          }
-        }
-
-        if (allRawDependencies.isEmpty()) {
-          projectDir
-              .walkTopDown()
-              .filter {
-                it.isFile &&
-                    (it.name == "build.gradle" || it.name == "build.gradle.kts") &&
-                    !it.path.contains("/build/")
-              }
-              .forEach { scriptFile ->
-                val analyzer = ScriptAnalyzerFactory.create(scriptFile)
-                val (_, scriptDeps) = analyzer.analyze(scriptFile)
-                allRawDependencies.addAll(scriptDeps)
-              }
-        }
-
-        // 链接
-        val linkedDependencies = linker.link(allRawDependencies, catalogMap)
-
-        return@withContext linkedDependencies.distinctBy { it.gav }
+        val scanResult = scanner.scan(projectDir)
+        scanResult.dependencies
       }
 
   override suspend fun checkUpdates(
