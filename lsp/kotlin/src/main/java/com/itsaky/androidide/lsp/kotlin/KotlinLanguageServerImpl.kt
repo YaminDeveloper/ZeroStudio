@@ -109,9 +109,9 @@ import kotlin.coroutines.resumeWithException
  * @author android_zero
  */
 class KotlinLanguageServerImpl(
-    private val process: Process,
-    val lspServer: LanguageServer
+    private val process: Process
 ) : ILanguageServer {
+    private lateinit var lspServer: LanguageServer
 
     override val serverId: String
         get() = SERVER_ID
@@ -186,6 +186,15 @@ class KotlinLanguageServerImpl(
 
     val clientEndpoint = ClientEndpoint()
 
+    fun bindRemoteServer(remoteServer: LanguageServer) {
+        this.lspServer = remoteServer
+    }
+
+    private fun requireServer(): LanguageServer {
+        check(::lspServer.isInitialized) { "Kotlin LSP remote server is not bound yet." }
+        return lspServer
+    }
+
     override fun connectClient(client: ILanguageClient?) {
         this.client = client
     }
@@ -206,7 +215,7 @@ class KotlinLanguageServerImpl(
                     )
                 )
             )
-            lspServer.workspaceService.didChangeConfiguration(configParams)
+            requireServer().workspaceService.didChangeConfiguration(configParams)
         }
     }
 
@@ -244,8 +253,8 @@ class KotlinLanguageServerImpl(
 
         runBlocking {
             try {
-                lspServer.initialize(initParams).await()
-                lspServer.initialized(InitializedParams())
+                requireServer().initialize(initParams).await()
+                requireServer().initialized(InitializedParams())
                 isInitialized = true
                 KotlinTextDocumentSyncHandler.onServerReady()
                 log.info("LSP4J Kotlin Server Initialized Successfully.")
@@ -276,7 +285,7 @@ class KotlinLanguageServerImpl(
     override fun didOpen(params: DidOpenTextDocumentParams) {
         if (!isInitialized) return
         val item = TextDocumentItem(params.file.toUri().toString(), params.languageId, params.version, params.text)
-        lspServer.textDocumentService.didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams(item))
+        requireServer().textDocumentService.didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams(item))
     }
 
     override fun didChange(params: DidChangeTextDocumentParams) {
@@ -286,17 +295,17 @@ class KotlinLanguageServerImpl(
             org.eclipse.lsp4j.TextDocumentContentChangeEvent(it.text) 
         }
         val id = VersionedTextDocumentIdentifier(params.file.toUri().toString(), params.version)
-        lspServer.textDocumentService.didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams(id, changes))
+        requireServer().textDocumentService.didChange(org.eclipse.lsp4j.DidChangeTextDocumentParams(id, changes))
     }
 
     override fun didClose(params: DidCloseTextDocumentParams) {
         if (!isInitialized) return
-        lspServer.textDocumentService.didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString())))
+        requireServer().textDocumentService.didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString())))
     }
 
     override fun didSave(params: DidSaveTextDocumentParams) {
         if (!isInitialized) return
-        lspServer.textDocumentService.didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString()), params.text))
+        requireServer().textDocumentService.didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString()), params.text))
     }
 
     // --- 核心特性实现 ---
@@ -311,7 +320,7 @@ class KotlinLanguageServerImpl(
                     params.position.toLsp4j()
                 )
                 
-                val response = lspServer.textDocumentService.completion(lspParams).await()
+                val response = requireServer().textDocumentService.completion(lspParams).await()
                 val items = if (response.isLeft) response.left else response.right.items
                 
                 // 将 LSP4J 的对象转换为 JsonArray，以复用我们强大的 KotlinCompletionConverter 增强逻辑
@@ -354,7 +363,7 @@ class KotlinLanguageServerImpl(
                 TextDocumentIdentifier(params.file.toUri().toString()),
                 params.position.toLsp4j()
             )
-            val result = lspServer.textDocumentService.definition(req).await()
+            val result = requireServer().textDocumentService.definition(req).await()
             val locations = result.left?.map { 
                 Location(File(java.net.URI(it.uri)).toPath(), it.range.toIde())
             } ?: emptyList()
@@ -373,7 +382,7 @@ class KotlinLanguageServerImpl(
                 this.textDocument = TextDocumentIdentifier(params.file.toUri().toString())
                 this.position = params.position.toLsp4j()
             }
-            val result = lspServer.textDocumentService.references(req).await()
+            val result = requireServer().textDocumentService.references(req).await()
             val locations = result?.map { 
                 Location(File(java.net.URI(it.uri)).toPath(), it.range.toIde())
             } ?: emptyList()
@@ -390,7 +399,7 @@ class KotlinLanguageServerImpl(
                 TextDocumentIdentifier(params.file.toUri().toString()),
                 params.position.toLsp4j()
             )
-            val result = lspServer.textDocumentService.hover(req).await()
+            val result = requireServer().textDocumentService.hover(req).await()
             val content = result?.contents?.left?.firstOrNull()?.left ?: result?.contents?.right?.value ?: ""
             MarkupContent(content, MarkupKind.MARKDOWN)
         } catch (e: Exception) {
@@ -412,7 +421,7 @@ class KotlinLanguageServerImpl(
                     TextDocumentIdentifier("file://dummy_for_format"),
                     FormattingOptions(EditorPreferences.tabSize, !EditorPreferences.useSoftTab)
                 )
-                val edits = lspServer.textDocumentService.formatting(req).await()
+                val edits = requireServer().textDocumentService.formatting(req).await()
                 val ideEdits = edits?.map { it.toIde() }?.toMutableList() ?: mutableListOf()
                 CodeFormatResult(false, ideEdits, mutableListOf())
             } catch (e: Exception) {
@@ -433,7 +442,7 @@ class KotlinLanguageServerImpl(
                 params.position.toLsp4j(),
                 params.newName
             )
-            val result = lspServer.textDocumentService.rename(req).await()
+            val result = requireServer().textDocumentService.rename(req).await()
             
             val ideDocumentChanges = mutableListOf<DocumentChange>()
             result?.changes?.forEach { (uri, edits) ->
@@ -451,7 +460,7 @@ class KotlinLanguageServerImpl(
         if (!isInitialized) return null
         return try {
             val params = ExecuteCommandParams(commandName, arguments)
-            val result = lspServer.workspaceService.executeCommand(params).get()
+            val result = requireServer().workspaceService.executeCommand(params).get()
             gson.toJsonTree(result)
         } catch (e: Exception) {
             log.error("Failed to execute workspace command: $commandName", e)
@@ -463,8 +472,8 @@ class KotlinLanguageServerImpl(
         log.info("Shutting down LSP4J Kotlin Server...")
         try {
             runBlocking {
-                lspServer.shutdown().await()
-                lspServer.exit()
+                requireServer().shutdown().await()
+                requireServer().exit()
             }
         } catch (e: Exception) {
             log.warn("Error during LSP shutdown: ${e.message}")

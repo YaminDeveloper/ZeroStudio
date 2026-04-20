@@ -32,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.eclipse.lsp4j.jsonrpc.Launcher
 import org.eclipse.lsp4j.launch.LSPLauncher
 import org.slf4j.LoggerFactory
 import java.io.File
@@ -45,6 +46,7 @@ class KotlinServerProcessManager(private val context: Context) {
 
     private var serverProcess: Process? = null
     private var currentServerImpl: KotlinLanguageServerImpl? = null
+    private var launcher: Launcher<org.eclipse.lsp4j.services.LanguageServer>? = null
     
     // 注入的全局 AndroidIDE 客户端实现，用来做 UI 交互（如报错提示框、代码替换）
     private val kotlinClient: KotlinLanguageClientImpl by lazy { KotlinLanguageClientImpl() }
@@ -148,14 +150,14 @@ class KotlinServerProcessManager(private val context: Context) {
 
             serverProcess = pb.start()
             log.info("Kotlin LSP Native Process started successfully. PID: ${serverProcess?.hashCode()}")
+            startStderrMonitor(serverProcess!!)
 
             // 初始化 LSP4J 通讯协议机制
             currentServerImpl?.shutdown()
             
-            val newServerImpl = KotlinLanguageServerImpl(
-                process = serverProcess!!,
-                lspServer = createLsp4jProxy(serverProcess!!)
-            )
+            val newServerImpl = KotlinLanguageServerImpl(process = serverProcess!!)
+            val remoteProxy = createLsp4jProxy(serverProcess!!, newServerImpl)
+            newServerImpl.bindRemoteServer(remoteProxy)
             
             newServerImpl.connectClient(kotlinClient)
             currentServerImpl = newServerImpl
@@ -174,23 +176,21 @@ class KotlinServerProcessManager(private val context: Context) {
     /**
      * 核心挂载器：创建并启动 LSP4J 协议桥
      */
-    private fun createLsp4jProxy(process: Process): org.eclipse.lsp4j.services.LanguageServer {
-        val serverImpl = KotlinLanguageServerImpl(process, null!!) // 暂时用 null 绕过，下面会马上赋值真正的 serverImpl
-        
-        // 创建客户端端点 (负责接收服务端的反向请求，如 diagnostic, workspaceEdit)
+    private fun createLsp4jProxy(
+        process: Process,
+        serverImpl: KotlinLanguageServerImpl
+    ): org.eclipse.lsp4j.services.LanguageServer {
         val clientEndpoint = serverImpl.clientEndpoint
-        
-        // 绑定输入输出流
-        val launcher = LSPLauncher.createClientLauncher(
+        launcher = LSPLauncher.createClientLauncher(
             clientEndpoint,
             process.inputStream,
             process.outputStream
         )
         
         // 启动异步线程窃听服务器返回
-        launcher.startListening()
+        launcher?.startListening()
         
-        return launcher.remoteProxy
+        return launcher!!.remoteProxy
     }
 
     private fun bindWorkspaceWhenReady() {
@@ -211,10 +211,27 @@ class KotlinServerProcessManager(private val context: Context) {
         }
     }
 
+    private fun startStderrMonitor(process: Process) {
+        coroutineScope.launch {
+            try {
+                process.errorStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        if (line.isNotBlank()) {
+                            log.debug("Kotlin LSP stderr: $line")
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // ignore stream close during shutdown
+            }
+        }
+    }
+
     fun stopServer() {
         currentServerImpl?.shutdown()
         serverProcess?.destroy()
         serverProcess = null
         currentServerImpl = null
+        launcher = null
     }
 }
