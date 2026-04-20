@@ -304,16 +304,15 @@ private fun DependencyListState(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
-      return
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-      items(items = reports, key = { it.dependency.gav }) { report ->
-        DependencyUpdateItem(report = report, onApplyClicked = onApplyClicked)
-        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+    } else {
+      LazyColumn(
+          modifier = Modifier.fillMaxSize(),
+          contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+      ) {
+        items(items = reports, key = { it.dependency.gav }) { report ->
+          DependencyUpdateItem(report = report, onApplyClicked = onApplyClicked)
+          HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+        }
       }
     }
   }
