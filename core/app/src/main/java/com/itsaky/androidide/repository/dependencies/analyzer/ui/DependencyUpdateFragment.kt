@@ -61,7 +61,7 @@ class DependencyUpdateFragment : BaseFragment() {
   override fun onCreateView(
       inflater: LayoutInflater,
       container: ViewGroup?,
-      savedInstanceState: Bundle?,
+      savedInstanceState: Bundle?
   ): View {
     return ComposeView(requireContext()).apply {
       setContent {
@@ -70,7 +70,7 @@ class DependencyUpdateFragment : BaseFragment() {
             DependencyUpdateScreen(
                 analyzer = analyzer,
                 onFlashSuccess = { requireActivity().flashSuccess(it) },
-                onFlashError = { requireActivity().flashError(it) },
+                onFlashError = { requireActivity().flashError(it) }
             )
           }
         }
@@ -81,7 +81,7 @@ class DependencyUpdateFragment : BaseFragment() {
 
 private enum class DependencyFilter {
   ONLY_OUTDATED,
-  ALL,
+  ALL
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,17 +89,18 @@ private enum class DependencyFilter {
 fun DependencyUpdateScreen(
     analyzer: ProjectAnalyzer,
     onFlashSuccess: (String) -> Unit,
-    onFlashError: (String) -> Unit,
+    onFlashError: (String) -> Unit
 ) {
   var reports by remember { mutableStateOf<List<UpdateReport>>(emptyList()) }
   var isLoading by remember { mutableStateOf(false) }
   var errorMessage by remember { mutableStateOf<String?>(null) }
   var warningMessage by remember { mutableStateOf<String?>(null) }
   var filter by rememberSaveable { mutableStateOf(DependencyFilter.ALL) }
-  val coroutineScope = rememberCoroutineScope()
 
-  fun refreshData() {
-    coroutineScope.launch {
+  val scope = rememberCoroutineScope()
+
+  fun refresh() {
+    scope.launch {
       isLoading = true
       errorMessage = null
       warningMessage = null
@@ -112,31 +113,26 @@ fun DependencyUpdateScreen(
           return@launch
         }
 
-        val deps = analyzer.extractDependencies(projectDir)
-        val scopedDeps = deps.filterIsInstance<ScopedDependencyInfo>().distinctBy { it.gav }
-        val fallbackReports =
-            scopedDeps.map { dep ->
-              UpdateReport(
-                  dependency = dep,
-                  latestVersion = dep.version,
-                  availableVersions = listOf(dep.version),
-              )
-            }
+        val scopedDeps =
+            analyzer.extractDependencies(projectDir).filterIsInstance<ScopedDependencyInfo>().distinctBy { it.gav }
 
-        reports = fallbackReports
+        val fallback = scopedDeps.map { dep ->
+          UpdateReport(
+              dependency = dep,
+              latestVersion = dep.version,
+              availableVersions = listOf(dep.version)
+          )
+        }
+        reports = fallback
 
         if (scopedDeps.isNotEmpty()) {
           try {
             val repos = analyzer.extractRepositories(projectDir)
-            val updates = analyzer.checkUpdates(scopedDeps, repos).associateBy { it.dependency.gav }
-            reports =
-                fallbackReports.map { base ->
-                  updates[base.dependency.gav] ?: base
-                }
-          } catch (updateError: Exception) {
+            val updateMap = analyzer.checkUpdates(scopedDeps, repos).associateBy { it.dependency.gav }
+            reports = fallback.map { base -> updateMap[base.dependency.gav] ?: base }
+          } catch (e: Exception) {
             warningMessage =
-                "Loaded project dependencies, but update metadata check failed: " +
-                    (updateError.message ?: "unknown error")
+                "Loaded project dependencies, but metadata check failed: ${e.message ?: "unknown error"}"
           }
         } else {
           warningMessage =
@@ -154,35 +150,28 @@ fun DependencyUpdateScreen(
     }
   }
 
-  LaunchedEffect(Unit) { refreshData() }
+  LaunchedEffect(Unit) { refresh() }
 
-  val filteredReports =
-      when (filter) {
-        DependencyFilter.ONLY_OUTDATED ->
-            reports.filter { it.latestVersion != it.dependency.version }
-        DependencyFilter.ALL -> reports
-      }
+  val visibleReports = when (filter) {
+    DependencyFilter.ONLY_OUTDATED -> reports.filter { it.latestVersion != it.dependency.version }
+    DependencyFilter.ALL -> reports
+  }
 
   Scaffold(
       topBar = {
         TopAppBar(
             title = { Text("Dependencies") },
-            actions = { TextButton(onClick = { refreshData() }) { Text("Rescan") } },
+            actions = { TextButton(onClick = { refresh() }) { Text("Rescan") } }
         )
       }
   ) { innerPadding ->
     when {
       isLoading -> LoadingState(innerPadding)
-      errorMessage != null ->
-          ErrorState(
-              innerPadding = innerPadding,
-              message = errorMessage ?: "Unknown error.",
-              onRetry = { refreshData() },
-          )
+      errorMessage != null -> ErrorState(innerPadding, errorMessage ?: "Unknown error", onRetry = { refresh() })
       else ->
           DependencyListState(
               innerPadding = innerPadding,
-              reports = filteredReports,
+              reports = visibleReports,
               totalCount = reports.size,
               filter = filter,
               warningMessage = warningMessage,
@@ -192,16 +181,16 @@ fun DependencyUpdateScreen(
                   onFlashSuccess("Already using ${report.dependency.artifactId}:$selectedVersion")
                   return@DependencyListState
                 }
-                coroutineScope.launch {
+                scope.launch {
                   val success = DependencyUpdater.update(report.dependency, selectedVersion)
                   if (success) {
                     onFlashSuccess("Updated ${report.dependency.artifactId} to $selectedVersion")
-                    refreshData()
+                    refresh()
                   } else {
                     onFlashError("Failed to update ${report.dependency.artifactId}")
                   }
                 }
-              },
+              }
           )
     }
   }
@@ -209,10 +198,7 @@ fun DependencyUpdateScreen(
 
 @Composable
 private fun LoadingState(innerPadding: PaddingValues) {
-  Box(
-      modifier = Modifier.fillMaxSize().padding(innerPadding),
-      contentAlignment = Alignment.Center,
-  ) {
+  Box(modifier = Modifier.fillMaxSize().padding(innerPadding), contentAlignment = Alignment.Center) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
       CircularProgressIndicator()
       Spacer(modifier = Modifier.height(12.dp))
@@ -222,27 +208,19 @@ private fun LoadingState(innerPadding: PaddingValues) {
 }
 
 @Composable
-private fun ErrorState(
-    innerPadding: PaddingValues,
-    message: String,
-    onRetry: () -> Unit,
-) {
+private fun ErrorState(innerPadding: PaddingValues, message: String, onRetry: () -> Unit) {
   Box(
       modifier = Modifier.fillMaxSize().padding(innerPadding).padding(20.dp),
-      contentAlignment = Alignment.Center,
+      contentAlignment = Alignment.Center
   ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
       Text(
           text = "Failed to load dependencies",
           style = MaterialTheme.typography.titleMedium,
-          fontWeight = FontWeight.SemiBold,
+          fontWeight = FontWeight.SemiBold
       )
       Spacer(modifier = Modifier.height(8.dp))
-      Text(
-          text = message,
-          style = MaterialTheme.typography.bodyMedium,
-          textAlign = TextAlign.Center,
-      )
+      Text(text = message, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
       Spacer(modifier = Modifier.height(16.dp))
       Button(onClick = onRetry) { Text("Retry") }
     }
@@ -257,22 +235,22 @@ private fun DependencyListState(
     filter: DependencyFilter,
     warningMessage: String?,
     onFilterChange: (DependencyFilter) -> Unit,
-    onApplyClicked: (UpdateReport, String) -> Unit,
+    onApplyClicked: (UpdateReport, String) -> Unit
 ) {
   Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
       FilterChip(
           selected = filter == DependencyFilter.ONLY_OUTDATED,
           onClick = { onFilterChange(DependencyFilter.ONLY_OUTDATED) },
-          label = { Text("Outdated only") },
+          label = { Text("Outdated only") }
       )
       FilterChip(
           selected = filter == DependencyFilter.ALL,
           onClick = { onFilterChange(DependencyFilter.ALL) },
-          label = { Text("All ($totalCount)") },
+          label = { Text("All ($totalCount)") }
       )
     }
 
@@ -281,14 +259,14 @@ private fun DependencyListState(
           text = warningMessage,
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
           style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.error,
+          color = MaterialTheme.colorScheme.error
       )
     } else {
       Text(
           text = "Detected dependencies: $totalCount",
           modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
           style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
       )
       Spacer(modifier = Modifier.height(16.dp))
       Button(onClick = onRetry) { Text("Retry") }
@@ -301,13 +279,13 @@ private fun DependencyListState(
         Text(
             text = "No dependencies to show for current filter.",
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
       }
     } else {
       LazyColumn(
           modifier = Modifier.fillMaxSize(),
-          contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+          contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
       ) {
         items(items = reports, key = { it.dependency.gav }) { report ->
           DependencyUpdateItem(report = report, onApplyClicked = onApplyClicked)
@@ -319,10 +297,7 @@ private fun DependencyListState(
 }
 
 @Composable
-private fun DependencyUpdateItem(
-    report: UpdateReport,
-    onApplyClicked: (UpdateReport, String) -> Unit,
-) {
+private fun DependencyUpdateItem(report: UpdateReport, onApplyClicked: (UpdateReport, String) -> Unit) {
   var selectedVersion by remember(report.dependency.gav) { mutableStateOf(report.latestVersion) }
   val versions = remember(report.availableVersions) {
     report.availableVersions.distinct().ifEmpty { listOf(report.dependency.version) }
@@ -334,27 +309,24 @@ private fun DependencyUpdateItem(
       Text(
           text = "${report.dependency.groupId}:${report.dependency.artifactId}",
           style = MaterialTheme.typography.titleSmall,
-          fontWeight = FontWeight.SemiBold,
+          fontWeight = FontWeight.SemiBold
       )
       Spacer(modifier = Modifier.height(4.dp))
       Text(
           text = "Current: ${report.dependency.version}  Latest: ${report.latestVersion}",
           style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          color = MaterialTheme.colorScheme.onSurfaceVariant
       )
       Spacer(modifier = Modifier.height(10.dp))
 
       LazyColumn(modifier = Modifier.fillMaxWidth().height(120.dp)) {
         items(versions) { version ->
-          TextButton(
-              onClick = { selectedVersion = version },
-              modifier = Modifier.fillMaxWidth(),
-          ) {
+          TextButton(onClick = { selectedVersion = version }, modifier = Modifier.fillMaxWidth()) {
             Text(
                 text = version,
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Start,
-                fontWeight = if (version == selectedVersion) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (version == selectedVersion) FontWeight.Bold else FontWeight.Normal
             )
           }
         }
@@ -365,7 +337,7 @@ private fun DependencyUpdateItem(
         OutlinedButton(onClick = { selectedVersion = report.latestVersion }) { Text("Use latest") }
         Button(
             onClick = { onApplyClicked(report, selectedVersion) },
-            enabled = hasUpdate || selectedVersion != report.dependency.version,
+            enabled = hasUpdate || selectedVersion != report.dependency.version
         ) {
           Text("Apply")
         }
