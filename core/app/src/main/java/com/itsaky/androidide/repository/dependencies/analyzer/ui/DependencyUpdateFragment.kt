@@ -110,7 +110,14 @@ fun DependencyUpdateScreen(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         contentPadding = PaddingValues(vertical = 16.dp),
     ) {
-      items(items = reports, key = { it.dependency.gav }, contentType = { "dependency_item" }) {
+      items(
+          items = reports,
+          key = { report ->
+            val dep = report.dependency as? ScopedDependencyInfo
+            "${report.dependency.gav}:${dep?.declaredFile?.absolutePath ?: "unknown"}:${dep?.statementTextRange?.startOffset ?: -1}"
+          },
+          contentType = { "dependency_item" },
+      ) {
           report ->
         DependencyUpdateItem(
             report = report,
@@ -163,6 +170,15 @@ fun DependencyUpdateItem(report: UpdateReport, onUpdateClicked: (String) -> Unit
           fontWeight = FontWeight.SemiBold,
           color = MaterialTheme.colorScheme.onSurface,
       )
+      val scoped = report.dependency as? ScopedDependencyInfo
+      scoped?.let {
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "${it.configuration} · ${it.declaredFile.name}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
+      }
       Spacer(modifier = Modifier.height(4.dp))
       Text(
           text =
