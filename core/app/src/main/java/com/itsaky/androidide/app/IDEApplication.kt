@@ -119,7 +119,7 @@ class IDEApplication : TermuxApplication() {
     }
     
     GlobalScope.launch(Dispatchers.IO) {
-      delay(5000)
+      delay(3700)
       if (!VMUtils.isJvm()) {
         ToolsManager.init(this@IDEApplication, null)
       }
