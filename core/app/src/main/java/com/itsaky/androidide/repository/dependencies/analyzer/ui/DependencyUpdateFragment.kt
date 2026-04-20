@@ -290,7 +290,11 @@ private fun DependencyListState(
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
+      Spacer(modifier = Modifier.height(16.dp))
+      Button(onClick = onRetry) { Text("Retry") }
     }
+  }
+}
 
     if (reports.isEmpty()) {
       Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
