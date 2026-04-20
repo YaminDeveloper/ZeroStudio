@@ -1,6 +1,7 @@
 package com.itsaky.androidide.repository.dependencies.analyzer.internal
 
 import com.itsaky.androidide.repository.dependencies.models.datas.ScopedDependencyInfo
+import com.itsaky.androidide.repository.dependencies.models.datas.TextRange
 import com.itsaky.androidide.repository.dependencies.models.datas.VersionCatalog
 import com.itsaky.androidide.repository.dependencies.models.enums.DeclarationType
 import java.io.File
@@ -29,6 +30,7 @@ class WorkspaceDependencyScanner(
       val (scriptRepos, scriptDeps) = analyzer.analyze(script)
       repositories += scriptRepos
       rawDependencies += scriptDeps
+      rawDependencies += extractPluginDependenciesFromScript(script)
     }
 
     val catalogMap = loadCatalogs(projectDir)
@@ -97,6 +99,32 @@ class WorkspaceDependencyScanner(
                 versionReference = libAlias,
             )
       }
+
+      catalog.plugins.forEach { (pluginAlias, plugin) ->
+        val version =
+            plugin.versionLiteral
+                ?: plugin.versionRef?.let { ref -> catalog.versions[ref]?.value }
+                ?: return@forEach
+
+        val range =
+            plugin.textRange
+                ?: plugin.versionRef?.let { ref -> catalog.versions[ref]?.textRange }
+
+        result +=
+            ScopedDependencyInfo(
+                configuration = "versionCatalogPlugin($alias)",
+                groupId = "gradle.plugin",
+                artifactId = plugin.id,
+                version = version,
+                declaredFile = catalog.sourceFile,
+                declarationType = DeclarationType.CATALOG_ACCESSOR,
+                statementTextRange = range,
+                versionDefinitionFile = catalog.sourceFile,
+                versionDefinitionRange = range,
+                tomlReference = "${alias}.${pluginAlias}",
+                versionReference = pluginAlias,
+            )
+      }
     }
 
     return result
@@ -110,5 +138,32 @@ class WorkspaceDependencyScanner(
         relative.startsWith(".gradle/") ||
         relative.contains("/.git/") ||
         relative.startsWith(".git/")
+  }
+
+  private fun extractPluginDependenciesFromScript(file: File): List<ScopedDependencyInfo> {
+    val text = file.readText()
+    val results = mutableListOf<ScopedDependencyInfo>()
+    val kotlinPattern = Regex("""id\s*\(\s*["']([^"']+)["']\s*\)\s*version\s*["']([^"']+)["']""")
+    val groovyPattern = Regex("""id\s+["']([^"']+)["']\s+version\s+["']([^"']+)["']""")
+
+    (kotlinPattern.findAll(text).toList() + groovyPattern.findAll(text).toList()).forEach { match ->
+      val pluginId = match.groupValues[1]
+      val version = match.groupValues[2]
+      val versionStart = match.range.first + match.value.lastIndexOf(version)
+      results +=
+          ScopedDependencyInfo(
+              configuration = "plugins",
+              groupId = "gradle.plugin",
+              artifactId = pluginId,
+              version = version,
+              declaredFile = file,
+              declarationType = DeclarationType.STRING_LITERAL,
+              statementTextRange = TextRange(match.range.first, match.range.last + 1),
+              versionDefinitionFile = file,
+              versionDefinitionRange = TextRange(versionStart, versionStart + version.length),
+          )
+    }
+
+    return results
   }
 }

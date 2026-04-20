@@ -16,7 +16,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,6 +58,7 @@ import com.itsaky.androidide.repository.dependencies.models.datas.UpdateReport
 import com.itsaky.androidide.utils.flashError
 import com.itsaky.androidide.utils.flashSuccess
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 class DependencyUpdateFragment : BaseFragment() {
 
@@ -97,6 +102,7 @@ fun DependencyUpdateScreen(
   var errorMessage by remember { mutableStateOf<String?>(null) }
   var warningMessage by remember { mutableStateOf<String?>(null) }
   var filter by rememberSaveable { mutableStateOf(DependencyFilter.ALL) }
+  var autoRetryAttempts by remember { mutableStateOf(0) }
 
   val scope = rememberCoroutineScope()
 
@@ -141,6 +147,9 @@ fun DependencyUpdateScreen(
         }
 
         reports = reports.sortedBy { it.dependency.gav }
+        if (reports.isNotEmpty()) {
+          autoRetryAttempts = 0
+        }
       } catch (e: Exception) {
         reports = emptyList()
         errorMessage = e.message ?: "Unknown error while loading dependencies."
@@ -152,6 +161,13 @@ fun DependencyUpdateScreen(
   }
 
   LaunchedEffect(Unit) { refresh() }
+  LaunchedEffect(isLoading, errorMessage, reports.size, autoRetryAttempts) {
+    if (!isLoading && errorMessage == null && reports.isEmpty() && autoRetryAttempts < 5) {
+      autoRetryAttempts += 1
+      delay(1200)
+      refresh()
+    }
+  }
 
   val visibleReports = when (filter) {
     DependencyFilter.ONLY_OUTDATED -> reports.filter { it.latestVersion != it.dependency.version }
@@ -168,8 +184,13 @@ fun DependencyUpdateScreen(
               reports = visibleReports,
               totalCount = reports.size,
               filter = filter,
+              isRefreshing = isLoading,
               warningMessage = warningMessage,
               onFilterChange = { filter = it },
+              onRefresh = {
+                autoRetryAttempts = 0
+                refresh()
+              },
               onApplyClicked = { report, selectedVersion ->
                 if (selectedVersion == report.dependency.version) {
                   onFlashSuccess("Already using ${report.dependency.artifactId}:$selectedVersion")
@@ -227,11 +248,17 @@ private fun DependencyListState(
     reports: List<UpdateReport>,
     totalCount: Int,
     filter: DependencyFilter,
+    isRefreshing: Boolean,
     warningMessage: String?,
     onFilterChange: (DependencyFilter) -> Unit,
+    onRefresh: () -> Unit,
     onApplyClicked: (UpdateReport, String) -> Unit
 ) {
-  Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+  val listState = rememberLazyListState()
+  val pullRefreshState = rememberPullRefreshState(refreshing = isRefreshing, onRefresh = onRefresh)
+
+  Box(modifier = Modifier.fillMaxSize().padding(innerPadding).pullRefresh(pullRefreshState)) {
+    Column(modifier = Modifier.fillMaxSize()) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -264,25 +291,32 @@ private fun DependencyListState(
       )
     }
 
-    if (reports.isEmpty()) {
-      Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(
-            text = "No dependencies to show for current filter.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-      }
-    } else {
-      LazyColumn(
-          modifier = Modifier.fillMaxSize(),
-          contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-      ) {
-        items(items = reports, key = { it.dependency.gav }) { report ->
-          DependencyUpdateItem(report = report, onApplyClicked = onApplyClicked)
-          HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+      if (reports.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+          Text(
+              text = "No dependencies to show for current filter.",
+              style = MaterialTheme.typography.bodyMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+        }
+      } else {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+          items(items = reports, key = { it.dependency.gav }) { report ->
+            DependencyUpdateItem(report = report, onApplyClicked = onApplyClicked)
+            HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+          }
         }
       }
     }
+    PullRefreshIndicator(
+        refreshing = isRefreshing,
+        state = pullRefreshState,
+        modifier = Modifier.align(Alignment.TopCenter)
+    )
   }
 }
 
