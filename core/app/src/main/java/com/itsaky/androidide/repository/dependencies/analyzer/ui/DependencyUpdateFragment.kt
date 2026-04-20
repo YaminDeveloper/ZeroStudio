@@ -1,42 +1,54 @@
-/*
- * @author android_zero
- *
- * 功能：依赖更新检测与管理 UI 界面 (Jetpack Compose 驱动)
- * 修复内容：
- * 1. 彻底移除了对 ComposeOwnerHelper 的依赖，解决了 Unresolved reference 报错。
- * 2. 在 Fragment 中，利用 ComposeView 自动查找父级 Owner 的特性，无需手动设置。
- * 3. 在 PopupWindow 中，使用 [setParentCompositionContext] 替代手动设置 Owner。
- *    这是 Compose 官方推荐的跨窗口上下文传递方式，既解决了报错，又能完美继承主题和生命周期。
- */
 package com.itsaky.androidide.repository.dependencies.analyzer.ui
 
-import android.content.Context
 import android.os.Bundle
-import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.PopupWindow
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.itsaky.androidide.fragments.BaseFragment
 import com.itsaky.androidide.projects.IProjectManager
 import com.itsaky.androidide.repository.dependencies.analyzer.ProjectAnalyzer
 import com.itsaky.androidide.repository.dependencies.analyzer.impl.GradleProjectAnalyzerImpl
 import com.itsaky.androidide.repository.dependencies.analyzer.internal.DependencyUpdater
-import com.itsaky.androidide.repository.dependencies.models.datas.*
-import com.itsaky.androidide.repository.dependencies.models.enums.*
-import com.itsaky.androidide.repository.dependencies.models.interfaces.*
+import com.itsaky.androidide.repository.dependencies.models.datas.UpdateReport
 import com.itsaky.androidide.utils.flashError
 import com.itsaky.androidide.utils.flashSuccess
 import kotlinx.coroutines.launch
@@ -66,7 +78,12 @@ class DependencyUpdateFragment : BaseFragment() {
   }
 }
 
-/** 依赖更新界面的主屏幕组合函数。 */
+private enum class DependencyFilter {
+  ONLY_OUTDATED,
+  ALL,
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DependencyUpdateScreen(
     analyzer: ProjectAnalyzer,
@@ -74,193 +91,232 @@ fun DependencyUpdateScreen(
     onFlashError: (String) -> Unit,
 ) {
   var reports by remember { mutableStateOf<List<UpdateReport>>(emptyList()) }
-  var isLoading by remember { mutableStateOf(true) }
+  var isLoading by remember { mutableStateOf(false) }
+  var errorMessage by remember { mutableStateOf<String?>(null) }
+  var filter by rememberSaveable { mutableStateOf(DependencyFilter.ONLY_OUTDATED) }
   val coroutineScope = rememberCoroutineScope()
 
   fun refreshData() {
-    isLoading = true
     coroutineScope.launch {
-      val workspace = IProjectManager.getInstance().getWorkspace()
-      val projectDir = workspace?.getProjectDir()
-      if (projectDir != null) {
+      isLoading = true
+      errorMessage = null
+      try {
+        val workspace = IProjectManager.getInstance().getWorkspace()
+        val projectDir = workspace?.getProjectDir()
+        if (projectDir == null) {
+          reports = emptyList()
+          errorMessage = "No opened workspace. Please open a project first."
+          return@launch
+        }
+
         val repos = analyzer.extractRepositories(projectDir)
         val deps = analyzer.extractDependencies(projectDir)
-        reports = analyzer.checkUpdates(deps, repos)
+        reports = analyzer.checkUpdates(deps, repos).sortedBy { it.dependency.gav }
+      } catch (e: Exception) {
+        reports = emptyList()
+        errorMessage = e.message ?: "Unknown error while loading dependencies."
+        onFlashError("Dependency scan failed: ${errorMessage}")
+      } finally {
+        isLoading = false
       }
-      isLoading = false
     }
   }
 
   LaunchedEffect(Unit) { refreshData() }
 
-  if (isLoading) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "Analyzing dependencies & checking updates...",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+  val filteredReports =
+      when (filter) {
+        DependencyFilter.ONLY_OUTDATED ->
+            reports.filter { it.latestVersion != it.dependency.version }
+        DependencyFilter.ALL -> reports
+      }
+
+  Scaffold(
+      topBar = {
+        TopAppBar(
+            title = { Text("Dependencies") },
+            actions = { TextButton(onClick = { refreshData() }) { Text("Rescan") } },
         )
       }
-    }
-  } else {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(vertical = 16.dp),
-    ) {
-      items(items = reports, key = { it.dependency.gav }, contentType = { "dependency_item" }) {
-          report ->
-        DependencyUpdateItem(
-            report = report,
-            onUpdateClicked = { selectedVersion ->
-              if (selectedVersion == report.dependency.version) {
-                onFlashSuccess("Already using ${report.dependency.artifactId}:$selectedVersion")
-              } else {
+  ) { innerPadding ->
+    when {
+      isLoading -> LoadingState(innerPadding)
+      errorMessage != null ->
+          ErrorState(
+              innerPadding = innerPadding,
+              message = errorMessage ?: "Unknown error.",
+              onRetry = { refreshData() },
+          )
+      else ->
+          DependencyListState(
+              innerPadding = innerPadding,
+              reports = filteredReports,
+              totalCount = reports.size,
+              filter = filter,
+              onFilterChange = { filter = it },
+              onApplyClicked = { report, selectedVersion ->
+                if (selectedVersion == report.dependency.version) {
+                  onFlashSuccess("Already using ${report.dependency.artifactId}:$selectedVersion")
+                  return@DependencyListState
+                }
                 coroutineScope.launch {
                   val success = DependencyUpdater.update(report.dependency, selectedVersion)
                   if (success) {
                     onFlashSuccess("Updated ${report.dependency.artifactId} to $selectedVersion")
                     refreshData()
                   } else {
-                    onFlashError(
-                        "Failed to update ${report.dependency.artifactId}. No match found."
-                    )
+                    onFlashError("Failed to update ${report.dependency.artifactId}")
                   }
                 }
-              }
-            },
+              },
+          )
+    }
+  }
+}
+
+@Composable
+private fun LoadingState(innerPadding: PaddingValues) {
+  Box(
+      modifier = Modifier.fillMaxSize().padding(innerPadding),
+      contentAlignment = Alignment.Center,
+  ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      CircularProgressIndicator()
+      Spacer(modifier = Modifier.height(12.dp))
+      Text("Scanning dependencies...")
+    }
+  }
+}
+
+@Composable
+private fun ErrorState(
+    innerPadding: PaddingValues,
+    message: String,
+    onRetry: () -> Unit,
+) {
+  Box(
+      modifier = Modifier.fillMaxSize().padding(innerPadding).padding(20.dp),
+      contentAlignment = Alignment.Center,
+  ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      Text(
+          text = "Failed to load dependencies",
+          style = MaterialTheme.typography.titleMedium,
+          fontWeight = FontWeight.SemiBold,
+      )
+      Spacer(modifier = Modifier.height(8.dp))
+      Text(
+          text = message,
+          style = MaterialTheme.typography.bodyMedium,
+          textAlign = TextAlign.Center,
+      )
+      Spacer(modifier = Modifier.height(16.dp))
+      Button(onClick = onRetry) { Text("Retry") }
+    }
+  }
+}
+
+@Composable
+private fun DependencyListState(
+    innerPadding: PaddingValues,
+    reports: List<UpdateReport>,
+    totalCount: Int,
+    filter: DependencyFilter,
+    onFilterChange: (DependencyFilter) -> Unit,
+    onApplyClicked: (UpdateReport, String) -> Unit,
+) {
+  Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      FilterChip(
+          selected = filter == DependencyFilter.ONLY_OUTDATED,
+          onClick = { onFilterChange(DependencyFilter.ONLY_OUTDATED) },
+          label = { Text("Outdated only") },
+      )
+      FilterChip(
+          selected = filter == DependencyFilter.ALL,
+          onClick = { onFilterChange(DependencyFilter.ALL) },
+          label = { Text("All ($totalCount)") },
+      )
+    }
+
+    if (reports.isEmpty()) {
+      Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = "No dependencies to show for current filter.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Divider(
-            modifier = Modifier.padding(vertical = 8.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-        )
+      }
+      return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+      items(items = reports, key = { it.dependency.gav }) { report ->
+        DependencyUpdateItem(report = report, onApplyClicked = onApplyClicked)
+        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
       }
     }
   }
 }
 
-/** 单项依赖视图 */
 @Composable
-fun DependencyUpdateItem(report: UpdateReport, onUpdateClicked: (String) -> Unit) {
-  var selectedVersion by remember { mutableStateOf(report.dependency.version) }
-  val currentView = LocalView.current
-
-  // 这个 Context 包含了当前的 Lifecycle、SavedState 以及 Theme 信息。
-  val compositionContext = rememberCompositionContext()
+private fun DependencyUpdateItem(
+    report: UpdateReport,
+    onApplyClicked: (UpdateReport, String) -> Unit,
+) {
+  var selectedVersion by remember(report.dependency.gav) { mutableStateOf(report.latestVersion) }
+  val versions = remember(report.availableVersions) {
+    report.availableVersions.distinct().ifEmpty { listOf(report.dependency.version) }
+  }
   val hasUpdate = report.latestVersion != report.dependency.version
 
-  Row(
-      modifier = Modifier.fillMaxWidth(),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.SpaceBetween,
-  ) {
-    Column(modifier = Modifier.weight(1f)) {
+  Card(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
       Text(
           text = "${report.dependency.groupId}:${report.dependency.artifactId}",
           style = MaterialTheme.typography.titleSmall,
           fontWeight = FontWeight.SemiBold,
-          color = MaterialTheme.colorScheme.onSurface,
       )
       Spacer(modifier = Modifier.height(4.dp))
       Text(
-          text =
-              if (hasUpdate) {
-                "Current: ${report.dependency.version}  →  Latest: ${report.latestVersion}"
-              } else {
-                "Current: ${report.dependency.version}  ·  Latest: ${report.latestVersion}"
-              },
+          text = "Current: ${report.dependency.version}  Latest: ${report.latestVersion}",
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
-    }
+      Spacer(modifier = Modifier.height(10.dp))
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-      OutlinedButton(
-          onClick = {
-            // 将 compositionContext 传递给 PopupWindow
-            VersionSelectionPopupWindow(
-                    context = currentView.context,
-                    versions = report.availableVersions,
-                    parentCompositionContext = compositionContext, // 传递上下文
-                ) { version ->
-                  selectedVersion = version
-                }
-                .showAtLocation(currentView, Gravity.CENTER, 0, 0)
-          },
-          modifier = Modifier.padding(end = 8.dp),
-      ) {
-        Text(text = selectedVersion)
-      }
-
-      Button(onClick = { onUpdateClicked(selectedVersion) }) { Text("Apply") }
-    }
-  }
-}
-
-/**
- * 使用 [setParentCompositionContext] 替代了直接设置 ViewTreeLifecycleOwner。 这是一个纯 Compose 的 API，不依赖 AndroidX
- * Lifecycle 的特定类，因此不会报 Unresolved reference。
- */
-class VersionSelectionPopupWindow(
-    context: Context,
-    versions: List<String>,
-    parentCompositionContext: CompositionContext,
-    onVersionSelected: (String) -> Unit,
-) : PopupWindow(context) {
-
-  init {
-    val composeView =
-        ComposeView(context).apply {
-          setParentCompositionContext(parentCompositionContext)
-
-          setContent {
-            MaterialTheme {
-              Surface(
-                  modifier = Modifier.fillMaxWidth(0.7f).heightIn(max = 400.dp),
-                  shape = MaterialTheme.shapes.medium,
-                  shadowElevation = 8.dp,
-                  color = MaterialTheme.colorScheme.surface,
-              ) {
-                Column {
-                  Text(
-                      text = "Select Version",
-                      style = MaterialTheme.typography.titleMedium,
-                      fontWeight = FontWeight.Bold,
-                      modifier = Modifier.padding(16.dp),
-                  )
-                  Divider()
-                  LazyColumn {
-                    items(versions.reversed()) { version ->
-                      Text(
-                          text = version,
-                          modifier =
-                              Modifier.fillMaxWidth()
-                                  .clickable {
-                                    onVersionSelected(version)
-                                    dismiss()
-                                  }
-                                  .padding(horizontal = 16.dp, vertical = 12.dp),
-                          style = MaterialTheme.typography.bodyMedium,
-                          color = MaterialTheme.colorScheme.onSurface,
-                      )
-                    }
-                  }
-                }
-              }
-            }
+      LazyColumn(modifier = Modifier.fillMaxWidth().height(120.dp)) {
+        items(versions) { version ->
+          TextButton(
+              onClick = { selectedVersion = version },
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text(
+                text = version,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Start,
+                fontWeight = if (version == selectedVersion) FontWeight.Bold else FontWeight.Normal,
+            )
           }
         }
+      }
 
-    contentView = composeView
-    width = ViewGroup.LayoutParams.WRAP_CONTENT
-    height = ViewGroup.LayoutParams.WRAP_CONTENT
-    isFocusable = true
-    isOutsideTouchable = true
-    elevation = 16f
-
-    // 必须手动销毁 Composition，否则会内存泄漏
-    setOnDismissListener { composeView.disposeComposition() }
+      Spacer(modifier = Modifier.height(8.dp))
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { selectedVersion = report.latestVersion }) { Text("Use latest") }
+        Button(
+            onClick = { onApplyClicked(report, selectedVersion) },
+            enabled = hasUpdate || selectedVersion != report.dependency.version,
+        ) {
+          Text("Apply")
+        }
+      }
+    }
   }
 }
