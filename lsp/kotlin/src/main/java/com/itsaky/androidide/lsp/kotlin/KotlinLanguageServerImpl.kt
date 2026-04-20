@@ -72,6 +72,7 @@ import org.eclipse.lsp4j.ApplyWorkspaceEditParams
 import org.eclipse.lsp4j.ApplyWorkspaceEditResponse
 import org.eclipse.lsp4j.ClientCapabilities
 import org.eclipse.lsp4j.CompletionCapabilities
+import org.eclipse.lsp4j.CompletionItemCapabilities
 import org.eclipse.lsp4j.DidChangeConfigurationParams
 import org.eclipse.lsp4j.DocumentFormattingParams
 import org.eclipse.lsp4j.ExecuteCommandCapabilities
