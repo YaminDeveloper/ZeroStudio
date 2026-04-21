@@ -29,6 +29,7 @@ import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -64,13 +65,8 @@ public class DefaultLanguageServerRegistry extends ILanguageServerRegistry {
   @Override
   public void connectClient(@NonNull final ILanguageClient client) {
     Objects.requireNonNull(client);
-    lock.readLock().lock();
-    try {
-      for (final var server : mRegister.values()) {
-        server.connectClient(client);
-      }
-    } finally {
-      lock.readLock().unlock();
+    for (final var server : snapshotServers()) {
+      server.connectClient(client);
     }
   }
 
@@ -90,13 +86,8 @@ public class DefaultLanguageServerRegistry extends ILanguageServerRegistry {
   @Override
   public void destroy() {
     EventBus.getDefault().unregister(this);
-    lock.readLock().lock();
-    try {
-      for (var server : mRegister.values()) {
-        server.shutdown();
-      }
-    } finally {
-      lock.readLock().unlock();
+    for (var server : snapshotServers()) {
+      server.shutdown();
     }
 
     lock.writeLock().lock();
@@ -127,16 +118,18 @@ public class DefaultLanguageServerRegistry extends ILanguageServerRegistry {
     }
 
     ILogger.ROOT.debug("Dispatching ProjectInitializedEvent to language servers...");
-    final List<ILanguageServer> servers;
+    for (final var server : snapshotServers()) {
+      server.setupWorkspace(workspace);
+    }
+  }
+
+  @NonNull
+  private List<ILanguageServer> snapshotServers() {
     lock.readLock().lock();
     try {
-      servers = List.copyOf(mRegister.values());
+      return new ArrayList<>(mRegister.values());
     } finally {
       lock.readLock().unlock();
-    }
-
-    for (final var server : servers) {
-      server.setupWorkspace(workspace);
     }
   }
 }

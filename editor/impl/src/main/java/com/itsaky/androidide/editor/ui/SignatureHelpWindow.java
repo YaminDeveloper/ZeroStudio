@@ -23,6 +23,7 @@ import android.text.SpannableStringBuilder;
 import android.text.style.ForegroundColorSpan;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import com.itsaky.androidide.lsp.models.MarkupContent;
 import com.itsaky.androidide.lsp.models.SignatureHelp;
 import com.itsaky.androidide.lsp.models.SignatureInformation;
 import com.itsaky.androidide.utils.ResourceUtilsKt;
@@ -83,8 +84,8 @@ public class SignatureHelpWindow extends BaseEditorWindow {
     final var activeParameter = signature.getActiveParameter();
     final SpannableStringBuilder sb = new SpannableStringBuilder();
 
-    if (activeSignature < 0 || activeParameter < 0) {
-      LOG.debug("activeSignature: {}, activeParameter: {}", activeSignature, activeParameter);
+    if (activeSignature < 0) {
+      LOG.debug("activeSignature is invalid: {}", activeSignature);
       return null;
     }
 
@@ -109,8 +110,9 @@ public class SignatureHelpWindow extends BaseEditorWindow {
     for (var i = 0; i < count; i++) {
       final var info = signatures.get(i);
       formatSignature(info, activeParameter, sb);
+      appendDocumentation(info.getDocumentation(), sb);
       if (i != count - 1) {
-        sb.append('\n');
+        sb.append('\n').append('\n');
       }
     }
 
@@ -130,12 +132,15 @@ public class SignatureHelpWindow extends BaseEditorWindow {
       SpannableStringBuilder result) {
 
     String name = signature.getLabel();
-    name = name.substring(0, name.indexOf("("));
+    final var indexOfParen = name.indexOf("(");
+    if (indexOfParen > 0) {
+      name = name.substring(0, indexOfParen);
+    }
 
     final var foreground = ResourceUtilsKt.resolveAttr(getEditor().getContext(),
         attr.colorOnSecondaryContainer);
-    final var paramSelected = 0xffff6060;
-    final var operators = 0xff4fc3f7;
+    final var paramSelected = ResourceUtilsKt.resolveAttr(getEditor().getContext(), attr.colorPrimary);
+    final var operators = foreground;
 
     result.append(
         name, new ForegroundColorSpan(foreground), SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -164,6 +169,20 @@ public class SignatureHelpWindow extends BaseEditorWindow {
       }
     }
     result.append(
-        ")", new ForegroundColorSpan(0xff4fc3f7), SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE);
+        ")", new ForegroundColorSpan(operators), SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE);
+  }
+
+  private void appendDocumentation(@Nullable MarkupContent documentation, @NonNull SpannableStringBuilder result) {
+    if (documentation == null || documentation.getValue() == null || documentation.getValue().isBlank()) {
+      return;
+    }
+
+    final var foreground =
+        ResourceUtilsKt.resolveAttr(getEditor().getContext(), attr.colorOnSecondaryContainer);
+    result.append('\n');
+    result.append(
+        documentation.getValue(),
+        new ForegroundColorSpan(foreground),
+        SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE);
   }
 }

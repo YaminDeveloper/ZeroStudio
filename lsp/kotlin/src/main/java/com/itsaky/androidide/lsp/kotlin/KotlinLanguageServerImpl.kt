@@ -60,6 +60,7 @@ import com.itsaky.androidide.models.Location
 import com.itsaky.androidide.models.Position
 import com.itsaky.androidide.models.Range
 import com.itsaky.androidide.preferences.internal.EditorPreferences
+import com.itsaky.androidide.projects.IProjectManager
 import com.itsaky.androidide.projects.IWorkspace
 import com.itsaky.androidide.utils.Environment
 import com.itsaky.androidide.utils.Logger
@@ -88,6 +89,7 @@ import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.ReferenceContext
 import org.eclipse.lsp4j.ShowMessageRequestParams
 import org.eclipse.lsp4j.SignatureHelpCapabilities
+import org.eclipse.lsp4j.SignatureHelpParams as LspSignatureHelpParams
 import org.eclipse.lsp4j.TextDocumentClientCapabilities
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
@@ -124,6 +126,7 @@ class KotlinLanguageServerImpl(
     private var lastInitError: String? = null
     private val gson = Gson()
     private val completionConverter = KotlinCompletionConverter()
+    private val initLock = Any()
 
     companion object {
         const val SERVER_ID = "kotlin-lsp"
@@ -230,15 +233,28 @@ class KotlinLanguageServerImpl(
 
         val bridge = KotlinJavaCompilerBridge(workspace)
         completionConverter.setJavaCompilerBridge(bridge)
+        ensureInitialized(workspace.getProjectDir())
+    }
 
-        val rootUri = workspace.getProjectDir().toURI().toString()
-        val cacheDir = Environment.getProjectCacheDir(workspace.getProjectDir())
+    private fun ensureInitialized(projectDir: File? = runCatching { IProjectManager.getInstance().projectDir }.getOrNull()): Boolean {
+        if (isInitialized) return true
+        val rootDir = projectDir ?: return false
+        synchronized(initLock) {
+            if (isInitialized) return true
+            initializeServer(rootDir)
+            return isInitialized
+        }
+    }
+
+    private fun initializeServer(projectDir: File) {
+        val rootUri = projectDir.toURI().toString()
+        val cacheDir = Environment.getProjectCacheDir(projectDir)
 
         val initParams = InitializeParams().apply {
             processId = android.os.Process.myPid()
             this.rootUri = rootUri
-            workspaceFolders = listOf(WorkspaceFolder(rootUri, workspace.getProjectDir().name))
-            
+            workspaceFolders = listOf(WorkspaceFolder(rootUri, projectDir.name))
+
             capabilities = ClientCapabilities().apply {
                 textDocument = TextDocumentClientCapabilities().apply {
                     completion = CompletionCapabilities(CompletionItemCapabilities(true))
@@ -249,7 +265,7 @@ class KotlinLanguageServerImpl(
                     executeCommand = ExecuteCommandCapabilities(true)
                 }
             }
-            
+
             initializationOptions = mapOf(
                 "storagePath" to cacheDir.absolutePath,
                 "lazyCompilation" to false,
@@ -264,7 +280,7 @@ class KotlinLanguageServerImpl(
                 isInitialized = true
                 lastInitError = null
                 KotlinTextDocumentSyncHandler.onServerReady()
-                log.info("LSP4J Kotlin Server Initialized Successfully.")
+                log.info("LSP4J Kotlin Server Initialized Successfully for ${projectDir.name}.")
             } catch (e: Exception) {
                 isInitialized = false
                 lastInitError = e.message
@@ -291,13 +307,13 @@ class KotlinLanguageServerImpl(
     // --- 文档生命周期同步 (Text Document Sync) ---
 
     override fun didOpen(params: DidOpenTextDocumentParams) {
-        if (!isInitialized) return
+        if (!ensureInitialized()) return
         val item = TextDocumentItem(params.file.toUri().toString(), params.languageId, params.version, params.text)
         requireServer().textDocumentService.didOpen(org.eclipse.lsp4j.DidOpenTextDocumentParams(item))
     }
 
     override fun didChange(params: DidChangeTextDocumentParams) {
-        if (!isInitialized) return
+        if (!ensureInitialized()) return
         val changes = params.contentChanges.map { 
             // 简化为全量更新以避免增量 range 计算的潜在偏移问题
             org.eclipse.lsp4j.TextDocumentContentChangeEvent(it.text) 
@@ -307,19 +323,19 @@ class KotlinLanguageServerImpl(
     }
 
     override fun didClose(params: DidCloseTextDocumentParams) {
-        if (!isInitialized) return
+        if (!ensureInitialized()) return
         requireServer().textDocumentService.didClose(org.eclipse.lsp4j.DidCloseTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString())))
     }
 
     override fun didSave(params: DidSaveTextDocumentParams) {
-        if (!isInitialized) return
+        if (!ensureInitialized()) return
         requireServer().textDocumentService.didSave(org.eclipse.lsp4j.DidSaveTextDocumentParams(TextDocumentIdentifier(params.file.toUri().toString()), params.text))
     }
 
     // --- 核心特性实现 ---
 
     override fun complete(params: CompletionParams?): CompletionResult {
-        if (params == null || !isInitialized) return CompletionResult.EMPTY
+        if (params == null || !ensureInitialized()) return CompletionResult.EMPTY
         
         return runBlocking(Dispatchers.IO) {
             try {
@@ -365,7 +381,7 @@ class KotlinLanguageServerImpl(
     }
 
     override suspend fun findDefinition(params: DefinitionParams): DefinitionResult = withContext(Dispatchers.IO) {
-        if (!isInitialized) return@withContext DefinitionResult(emptyList())
+        if (!ensureInitialized()) return@withContext DefinitionResult(emptyList())
         try {
             val req = org.eclipse.lsp4j.DefinitionParams(
                 TextDocumentIdentifier(params.file.toUri().toString()),
@@ -382,7 +398,7 @@ class KotlinLanguageServerImpl(
     }
 
     override suspend fun findReferences(params: ReferenceParams): ReferenceResult = withContext(Dispatchers.IO) {
-        if (!isInitialized) return@withContext ReferenceResult(emptyList())
+        if (!ensureInitialized()) return@withContext ReferenceResult(emptyList())
         try {
             val req = org.eclipse.lsp4j.ReferenceParams(
                 ReferenceContext(params.includeDeclaration)
@@ -401,7 +417,7 @@ class KotlinLanguageServerImpl(
     }
 
     override suspend fun hover(params: DefinitionParams): MarkupContent = withContext(Dispatchers.IO) {
-        if (!isInitialized) return@withContext MarkupContent("", MarkupKind.PLAIN)
+        if (!ensureInitialized()) return@withContext MarkupContent("", MarkupKind.PLAIN)
         try {
             val req = org.eclipse.lsp4j.HoverParams(
                 TextDocumentIdentifier(params.file.toUri().toString()),
@@ -421,7 +437,7 @@ class KotlinLanguageServerImpl(
     }
 
     override fun formatCode(params: FormatCodeParams?): CodeFormatResult {
-        if (params == null || !isInitialized) return CodeFormatResult.NONE
+        if (params == null || !ensureInitialized()) return CodeFormatResult.NONE
         return runBlocking(Dispatchers.IO) {
             try {
                 // Formatting 的 Uri 理论上需要真实的 Uri，这里为了兼容现有行为先这样处理
@@ -440,10 +456,57 @@ class KotlinLanguageServerImpl(
 
     override suspend fun expandSelection(params: ExpandSelectionParams): Range = params.selection
 
-    override suspend fun signatureHelp(params: SignatureHelpParams): SignatureHelp = SignatureHelp(emptyList(), 0, 0)
+    override suspend fun signatureHelp(params: SignatureHelpParams): SignatureHelp = withContext(Dispatchers.IO) {
+        if (!ensureInitialized()) return@withContext SignatureHelp(emptyList(), 0, 0)
+        try {
+            val req = LspSignatureHelpParams(
+                TextDocumentIdentifier(params.file.toUri().toString()),
+                params.position.toLsp4j()
+            )
+            val result = requireServer().textDocumentService.signatureHelp(req).await()
+            if (result == null) {
+                return@withContext SignatureHelp(emptyList(), 0, 0)
+            }
+
+            val signatures = result.signatures?.map { sig ->
+                com.itsaky.androidide.lsp.models.SignatureInformation(
+                    label = sig.label ?: "",
+                    documentation = sig.documentation.toIdeMarkup(),
+                    parameters = sig.parameters?.map { param ->
+                        val label = when (val pLabel = param.label) {
+                            is String -> pLabel
+                            is List<*> -> {
+                                if (pLabel.size >= 2) {
+                                    val start = (pLabel[0] as? Number)?.toInt() ?: 0
+                                    val end = (pLabel[1] as? Number)?.toInt() ?: 0
+                                    val safeStart = start.coerceIn(0, (sig.label ?: "").length)
+                                    val safeEnd = end.coerceIn(safeStart, (sig.label ?: "").length)
+                                    (sig.label ?: "").substring(safeStart, safeEnd)
+                                } else ""
+                            }
+                            else -> ""
+                        }
+                        com.itsaky.androidide.lsp.models.ParameterInformation(
+                            label = label,
+                            documentation = param.documentation.toIdeMarkup(),
+                        )
+                    } ?: emptyList()
+                )
+            } ?: emptyList()
+
+            SignatureHelp(
+                signatures = signatures,
+                activeSignature = result.activeSignature ?: 0,
+                activeParameter = result.activeParameter ?: 0,
+            )
+        } catch (e: Exception) {
+            log.error("SignatureHelp request failed", e)
+            SignatureHelp(emptyList(), 0, 0)
+        }
+    }
 
     override suspend fun rename(params: RenameParams): WorkspaceEdit = withContext(Dispatchers.IO) {
-        if (!isInitialized) return@withContext WorkspaceEdit()
+        if (!ensureInitialized()) return@withContext WorkspaceEdit()
         try {
             val req = org.eclipse.lsp4j.RenameParams(
                 TextDocumentIdentifier(params.file.toUri().toString()),
@@ -465,7 +528,7 @@ class KotlinLanguageServerImpl(
     }
 
     fun executeWorkspaceCommand(commandName: String, arguments: List<Any>): JsonElement? {
-        if (!isInitialized) return null
+        if (!ensureInitialized()) return null
         return try {
             val params = ExecuteCommandParams(commandName, arguments)
             val result = requireServer().workspaceService.executeCommand(params).get()
@@ -527,5 +590,16 @@ class KotlinLanguageServerImpl(
             severity = mappedSeverity,
             tags = emptyList()
         )
+    }
+
+    private fun org.eclipse.lsp4j.jsonrpc.messages.Either<String, org.eclipse.lsp4j.MarkupContent>?.toIdeMarkup(): MarkupContent {
+        if (this == null) return MarkupContent("", MarkupKind.PLAIN)
+        return if (this.isLeft) {
+            MarkupContent(this.left ?: "", MarkupKind.PLAIN)
+        } else {
+            val markup = this.right
+            val kind = if (markup?.kind == "markdown") MarkupKind.MARKDOWN else MarkupKind.PLAIN
+            MarkupContent(markup?.value ?: "", kind)
+        }
     }
 }
