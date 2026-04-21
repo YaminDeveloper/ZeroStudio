@@ -10,10 +10,13 @@ import com.itsaky.androidide.compose.preview.compiler.DexCache
 import com.itsaky.androidide.compose.preview.data.source.ProjectContext
 import com.itsaky.androidide.compose.preview.data.source.ProjectContextSource
 import com.itsaky.androidide.compose.preview.domain.model.ParsedPreviewSource
+import com.itsaky.androidide.lookup.Lookup
+import com.itsaky.androidide.projects.builder.BuildService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 class ComposePreviewRepositoryImpl(
     private val projectContextSource: ProjectContextSource = ProjectContextSource()
@@ -28,11 +31,16 @@ class ComposePreviewRepositoryImpl(
 
     private var runtimeDex: File? = null
     private var projectContext: ProjectContext? = null
+    private var openedFilePath: String? = null
     private var daemonInitialized = false
     private var cachedClasspath: String? = null
 
     companion object {
         private val LOG = LoggerFactory.getLogger(ComposePreviewRepositoryImpl::class.java)
+        private val USE_GRADLE_DEX_TAG_REGEX = Regex(
+            """@compose-preview-use-gradle-dex\s*:\s*(true|false)""",
+            RegexOption.IGNORE_CASE
+        )
     }
 
     override suspend fun initialize(
@@ -42,6 +50,7 @@ class ComposePreviewRepositoryImpl(
         runCatching {
             val ctx = projectContextSource.resolveContext(filePath)
             projectContext = ctx
+            openedFilePath = filePath
 
             if (ctx.needsBuild && ctx.modulePath != null) {
                 LOG.warn("No intermediate classes found - build required before initialization")
@@ -49,6 +58,7 @@ class ComposePreviewRepositoryImpl(
             }
 
             val cpManager = initializeInfrastructure(context)
+            cpManager.configureFromProjectClasspath(ctx.compileClasspaths)
 
             if (!cpManager.ensureComposeJarsExtracted()) {
                 return@runCatching InitializationResult.Failed(
@@ -115,12 +125,18 @@ class ComposePreviewRepositoryImpl(
             val workDir = requireInitialized(this@ComposePreviewRepositoryImpl.workDir, "workDir")
             val classpathManager = requireInitialized(this@ComposePreviewRepositoryImpl.classpathManager, "classpathManager")
             val context = requireInitialized(projectContext, "projectContext")
+            val useGradleDex = shouldUseGradleDex(source)
 
             val fileName = parsedSource.className?.removeSuffix("Kt") ?: "Preview"
             val generatedClassName = "${fileName}Kt"
             val fullClassName = "${parsedSource.packageName}.$generatedClassName"
 
             val sourceHash = cache.computeSourceHash(source)
+
+            if (useGradleDex) {
+                LOG.info("Using direct gradle-dex mode for {}", fullClassName)
+                return@runCatching compileUsingGradleDexMode(fullClassName, context)
+            }
 
             val cached = cache.getCachedDex(sourceHash)
             if (cached != null) {
@@ -252,6 +268,75 @@ class ComposePreviewRepositoryImpl(
         }
     }
 
+    private fun shouldUseGradleDex(source: String): Boolean {
+        val raw = USE_GRADLE_DEX_TAG_REGEX.find(source)?.groupValues?.get(1) ?: return false
+        return raw.equals("true", ignoreCase = true)
+    }
+
+    private fun compileUsingGradleDexMode(
+        fullClassName: String,
+        context: ProjectContext
+    ): CompilationResult {
+        runGradleDexTasks(context)
+
+        val refreshedContext = openedFilePath
+            ?.let { projectContextSource.resolveContext(it) }
+            ?: context
+        projectContext = refreshedContext
+        classpathManager?.configureFromProjectClasspath(refreshedContext.compileClasspaths)
+
+        val dexFiles = refreshedContext.projectDexFiles.filter { it.exists() }
+        if (dexFiles.isEmpty()) {
+            throw CompilationException(
+                message = "No project DEX files found after Gradle build. Please run an assemble task first."
+            )
+        }
+
+        return CompilationResult(
+            dexFile = dexFiles.first(),
+            className = fullClassName,
+            runtimeDex = runtimeDex,
+            projectDexFiles = dexFiles
+        )
+    }
+
+    private fun runGradleDexTasks(context: ProjectContext) {
+        val buildService = Lookup.getDefault().lookup(BuildService.KEY_BUILD_SERVICE)
+            ?: throw CompilationException("BuildService is unavailable for gradle-dex mode.")
+        if (buildService.isBuildInProgress) {
+            throw CompilationException("Build is already in progress. Try gradle-dex preview again when build finishes.")
+        }
+
+        val capitalizedVariant = context.variantName.replaceFirstChar { it.uppercaseChar() }
+        val modulePath = context.modulePath?.takeIf { it.isNotBlank() }
+        val taskPrefix = modulePath?.let { "$it:" } ?: ""
+        val candidateTasks = listOf(
+            "${taskPrefix}mergeProjectDex$capitalizedVariant",
+            "${taskPrefix}mergeDex$capitalizedVariant",
+            "${taskPrefix}dexBuilder$capitalizedVariant",
+            "${taskPrefix}assemble$capitalizedVariant"
+        )
+
+        val errors = mutableListOf<String>()
+        for (task in candidateTasks) {
+            try {
+                LOG.info("Running Gradle tooling task for gradle-dex mode: {}", task)
+                val result = buildService.executeTasks(task).get(15, TimeUnit.MINUTES)
+                if (result.isSuccessful) {
+                    LOG.info("Gradle task succeeded for gradle-dex mode: {}", task)
+                    return
+                }
+                errors += "$task -> unsuccessful"
+            } catch (e: Exception) {
+                errors += "$task -> ${e.message}"
+            }
+        }
+
+        throw CompilationException(
+            "Failed to run dex-related Gradle tooling tasks for variant '$capitalizedVariant': ${errors.joinToString("; ")}"
+        )
+    }
+
     override fun computeSourceHash(source: String): String {
         val cache = dexCache
         if (cache == null) {
@@ -270,6 +355,7 @@ class ComposePreviewRepositoryImpl(
         daemonInitialized = false
         cachedClasspath = null
         projectContext = null
+        openedFilePath = null
         runtimeDex = null
         LOG.debug("Repository reset")
     }

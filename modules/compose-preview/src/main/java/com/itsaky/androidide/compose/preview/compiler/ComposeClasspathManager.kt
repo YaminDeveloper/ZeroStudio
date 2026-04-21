@@ -3,16 +3,11 @@ package com.itsaky.androidide.compose.preview.compiler
 import android.content.Context
 import com.itsaky.androidide.utils.Environment
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
-import java.net.URL
-import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
 class ComposeClasspathManager(private val context: Context) {
@@ -31,28 +26,35 @@ class ComposeClasspathManager(private val context: Context) {
     private val runtimeDexDir: File
         get() = File(composeDir, "dex")
 
-    private val localMavenRepo: File
-        get() = File(Environment.HOME, "maven/localMvnRepository")
+    private val gradleModuleCache: File
+        get() = File(Environment.HOME, ".gradle/caches/modules-2/files-2.1")
 
     private val dexMutex = Mutex()
 
     private val kotlinArtifacts = mapOf(
-        "kotlin-compiler" to "org/jetbrains/kotlin/kotlin-compiler-embeddable",
-        "kotlin-stdlib" to "org/jetbrains/kotlin/kotlin-stdlib",
-        "kotlin-reflect" to "org/jetbrains/kotlin/kotlin-reflect",
-        "kotlin-script-runtime" to "org/jetbrains/kotlin/kotlin-script-runtime",
-        "trove4j" to "org/jetbrains/intellij/deps/trove4j",
-        "annotations" to "org/jetbrains/annotations"
+        "kotlin-compiler" to Pair("org.jetbrains.kotlin", "kotlin-compiler-embeddable"),
+        "kotlin-compiler-runner" to Pair("org.jetbrains.kotlin", "kotlin-compiler-runner"),
+        "kotlin-stdlib" to Pair("org.jetbrains.kotlin", "kotlin-stdlib"),
+        "kotlin-reflect" to Pair("org.jetbrains.kotlin", "kotlin-reflect"),
+        "kotlin-script-runtime" to Pair("org.jetbrains.kotlin", "kotlin-script-runtime"),
+        "trove4j" to Pair("org.jetbrains.intellij.deps", "trove4j"),
+        "annotations" to Pair("org.jetbrains", "annotations"),
+        "kotlinx-coroutines-core" to Pair("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm")
     )
 
-    private val requiredCompilerArtifacts = listOf(
-        Triple("org.jetbrains.kotlin", "kotlin-compiler-embeddable", "2.1.0"),
-        Triple("org.jetbrains.kotlin", "kotlin-stdlib", "2.1.0"),
-        Triple("org.jetbrains.kotlin", "kotlin-reflect", "2.1.0"),
-        Triple("org.jetbrains.kotlin", "kotlin-script-runtime", "2.1.0"),
-        Triple("org.jetbrains.intellij.deps", "trove4j", "1.0.20200330"),
-        Triple("org.jetbrains", "annotations", "24.1.0"),
+    private val requiredCompilerArtifactKeys = listOf(
+        "kotlin-compiler",
+        "kotlin-compiler-runner",
+        "kotlin-stdlib",
+        "kotlin-reflect",
+        "kotlin-script-runtime",
+        "trove4j",
+        "annotations",
+        "kotlinx-coroutines-core"
     )
+
+    private var projectKotlinVersion: String? = null
+    private var projectCoroutinesVersion: String? = null
 
     private val requiredRuntimeJarPatterns = listOf<Any>(
         "compose-compiler-plugin.jar",
@@ -84,9 +86,9 @@ class ComposeClasspathManager(private val context: Context) {
     }
 
     fun isKotlinCompilerAvailable(): Boolean {
-        val compiler = findMavenJar("kotlin-compiler")
+        val compiler = findGradleCacheJar("kotlin-compiler")
         val available = compiler?.exists() == true
-        LOG.info("Kotlin compiler available in local Maven repo: {}", available)
+        LOG.info("Kotlin compiler available in Gradle cache: {}", available)
         return available
     }
 
@@ -104,26 +106,103 @@ class ComposeClasspathManager(private val context: Context) {
         }
     }
 
-    private fun findMavenJar(artifactKey: String): File? {
-        val artifactPath = kotlinArtifacts[artifactKey] ?: return null
-        val artifactDir = File(localMavenRepo, artifactPath)
+    private fun findGradleCacheJar(artifactKey: String): File? {
+        val coordinates = kotlinArtifacts[artifactKey] ?: return null
+        val version = resolveArtifactVersion(artifactKey, coordinates.first, coordinates.second) ?: return null
+        return findGradleCacheJar(coordinates.first, coordinates.second, version)
+    }
+
+    private fun resolveArtifactVersion(artifactKey: String, groupId: String, artifactId: String): String? {
+        return when (artifactKey) {
+            "kotlin-compiler",
+            "kotlin-compiler-runner",
+            "kotlin-stdlib",
+            "kotlin-reflect",
+            "kotlin-script-runtime" -> projectKotlinVersion ?: findLatestArtifactVersion(groupId, artifactId)
+            "kotlinx-coroutines-core" -> projectCoroutinesVersion ?: findLatestArtifactVersion(groupId, artifactId)
+            "trove4j" -> "1.0.20200330"
+            "annotations" -> "24.1.0"
+            else -> findLatestArtifactVersion(groupId, artifactId)
+        }
+    }
+
+    private fun findLatestArtifactVersion(groupId: String, artifactId: String): String? {
+        val artifactRoot = File(gradleModuleCache, "$groupId/$artifactId")
+        val versions = artifactRoot.listFiles { file -> file.isDirectory }
+            ?.map { it.name }
+            ?.sortedWith { a, b -> compareVersionStrings(b, a) }
+            ?: return null
+        return versions.firstOrNull()
+    }
+
+    private fun compareVersionStrings(left: String, right: String): Int {
+        val separators = "[.-]".toRegex()
+        val leftParts = left.split(separators)
+        val rightParts = right.split(separators)
+        val max = maxOf(leftParts.size, rightParts.size)
+        for (i in 0 until max) {
+            val l = leftParts.getOrNull(i) ?: "0"
+            val r = rightParts.getOrNull(i) ?: "0"
+            val ln = l.toIntOrNull()
+            val rn = r.toIntOrNull()
+            val cmp = when {
+                ln != null && rn != null -> ln.compareTo(rn)
+                else -> l.compareTo(r)
+            }
+            if (cmp != 0) return cmp
+        }
+        return 0
+    }
+
+    fun configureFromProjectClasspath(classpaths: List<File>) {
+        projectKotlinVersion = classpaths
+            .firstNotNullOfOrNull { file ->
+                Regex("""kotlin-(?:stdlib(?:-jdk\d+)?|compiler-embeddable)-(.+)\.jar$""")
+                    .find(file.name)
+                    ?.groupValues
+                    ?.get(1)
+            }
+
+        projectCoroutinesVersion = classpaths
+            .firstNotNullOfOrNull { file ->
+                Regex("""kotlinx-coroutines-core(?:-jvm)?-(.+)\.jar$""")
+                    .find(file.name)
+                    ?.groupValues
+                    ?.get(1)
+            }
+
+        LOG.info(
+            "Configured Kotlin artifact versions from project classpath: kotlin={}, coroutines={}",
+            projectKotlinVersion ?: "auto",
+            projectCoroutinesVersion ?: "auto"
+        )
+    }
+
+    private fun findGradleCacheJar(groupId: String, artifactId: String, version: String): File? {
+        val artifactDir = File(gradleModuleCache, "$groupId/$artifactId/$version")
 
         if (!artifactDir.exists()) {
-            LOG.debug("Maven artifact dir not found: {}", artifactDir)
+            LOG.debug("Gradle cache artifact dir not found: {}", artifactDir)
             return null
         }
 
-        val versionDirs = artifactDir.listFiles { file -> file.isDirectory }
-            ?.sortedByDescending { it.name }
+        val jarFileName = "$artifactId-$version.jar"
+        val hashDirs = artifactDir.listFiles { file -> file.isDirectory }
+            ?.sortedByDescending { it.lastModified() }
             ?: return null
 
-        for (versionDir in versionDirs) {
-            val jars = versionDir.listFiles { file ->
-                file.extension == "jar" && !file.name.contains("-sources") && !file.name.contains("-javadoc")
-            }
-            if (!jars.isNullOrEmpty()) {
-                LOG.debug("Found {} in local Maven repo: {}", artifactKey, jars[0])
-                return jars[0]
+        for (hashDir in hashDirs) {
+            val jar = File(hashDir, jarFileName)
+            if (jar.exists()) {
+                LOG.debug(
+                    "Found {}:{}:{} in Gradle cache hash dir {}: {}",
+                    groupId,
+                    artifactId,
+                    version,
+                    hashDir.name,
+                    jar
+                )
+                return jar
             }
         }
 
@@ -166,18 +245,11 @@ class ComposeClasspathManager(private val context: Context) {
     }
 
     fun getKotlinCompiler(): File? {
-        return findMavenJar("kotlin-compiler")
+        return findGradleCacheJar("kotlin-compiler")
     }
 
     suspend fun ensureCompilerArtifactsAvailable(): Boolean = withContext(Dispatchers.IO) {
-        var allAvailable = true
-        requiredCompilerArtifacts.forEach { (groupId, artifactId, version) ->
-            val artifact = ensureArtifactDownloaded(groupId, artifactId, version)
-            if (artifact == null || !artifact.exists()) {
-                allAvailable = false
-            }
-        }
-        allAvailable
+        requiredCompilerArtifactKeys.all { key -> findGradleCacheJar(key)?.exists() == true }
     }
 
     fun getCompilerPlugin(): File {
@@ -185,47 +257,22 @@ class ComposeClasspathManager(private val context: Context) {
     }
 
     fun getKotlinStdlib(): File? {
-        return findMavenJar("kotlin-stdlib")
+        return findGradleCacheJar("kotlin-stdlib")
     }
 
     fun getCompilerBootstrapClasspath(): String {
         val jars = buildList {
-            findMavenJar("kotlin-compiler")?.let { add(it) }
-            findMavenJar("kotlin-stdlib")?.let { add(it) }
-            findMavenJar("kotlin-reflect")?.let { add(it) }
-            findMavenJar("kotlin-script-runtime")?.let { add(it) }
-            findMavenJar("trove4j")?.let { add(it) }
-            findMavenJar("annotations")?.let { add(it) }
+            findGradleCacheJar("kotlin-compiler")?.let { add(it) }
+            findGradleCacheJar("kotlin-compiler-runner")?.let { add(it) }
+            findGradleCacheJar("kotlin-stdlib")?.let { add(it) }
+            findGradleCacheJar("kotlin-reflect")?.let { add(it) }
+            findGradleCacheJar("kotlin-script-runtime")?.let { add(it) }
+            findGradleCacheJar("trove4j")?.let { add(it) }
+            findGradleCacheJar("annotations")?.let { add(it) }
+            findGradleCacheJar("kotlinx-coroutines-core")?.let { add(it) }
         }
         return jars.filter { it.exists() }
             .joinToString(File.pathSeparator) { it.absolutePath }
-    }
-
-    private fun ensureArtifactDownloaded(groupId: String, artifactId: String, version: String): File? {
-        val relativeDir = "${groupId.replace('.', '/')}/$artifactId/$version"
-        val artifactDir = File(localMavenRepo, relativeDir).apply { mkdirs() }
-        val jarName = "$artifactId-$version.jar"
-        val jarFile = File(artifactDir, jarName)
-        if (jarFile.exists() && jarFile.length() > 0L) {
-            return jarFile
-        }
-
-        val artifactUrl = "https://repo1.maven.org/maven2/$relativeDir/$jarName"
-        return try {
-            LOG.info("Downloading missing Kotlin compiler artifact: {}", artifactUrl)
-            URL(artifactUrl).openStream().use { input ->
-                jarFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
-            jarFile
-        } catch (e: Exception) {
-            LOG.error("Failed to download artifact {}", artifactUrl, e)
-            if (jarFile.exists()) {
-                jarFile.delete()
-            }
-            null
-        }
     }
 
     fun getRuntimeJars(): List<File> {
@@ -238,7 +285,7 @@ class ComposeClasspathManager(private val context: Context) {
     fun getAllJars(): List<File> {
         return buildList {
             addAll(getRuntimeJars())
-            findMavenJar("kotlin-stdlib")?.let { add(it) }
+            findGradleCacheJar("kotlin-stdlib")?.let { add(it) }
         }
     }
 
