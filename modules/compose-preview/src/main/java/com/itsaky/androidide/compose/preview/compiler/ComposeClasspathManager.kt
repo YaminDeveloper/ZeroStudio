@@ -3,16 +3,12 @@ package com.itsaky.androidide.compose.preview.compiler
 import android.content.Context
 import com.itsaky.androidide.utils.Environment
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
 import java.net.URL
-import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
 class ComposeClasspathManager(private val context: Context) {
@@ -318,12 +314,12 @@ class ComposeClasspathManager(private val context: Context) {
                     .redirectErrorStream(true)
                     .start()
 
-                val outputDeferred = async {
-                    BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-                }
-
-                val completed = process.waitFor(D8_TIMEOUT_MINUTES, TimeUnit.MINUTES)
-                val output = outputDeferred.await()
+                val completed =
+                    process.waitFor(
+                        D8_TIMEOUT_MINUTES * 60,
+                        java.util.concurrent.TimeUnit.SECONDS,
+                    )
+                val output = process.inputStream.bufferedReader().use { it.readText() }
 
                 if (!completed) {
                     process.destroyForcibly()

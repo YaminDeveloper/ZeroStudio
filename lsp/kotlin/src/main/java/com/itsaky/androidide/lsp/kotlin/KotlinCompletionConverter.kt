@@ -60,11 +60,7 @@ class KotlinCompletionConverter {
         for (item in items) {
             try {
                 val converted = convertItemFast(item, fileContent)
-                // 剔除 KLS 返回的毫无意义的 "K" 或 "Keyword" 占位补全项
-                if (converted.ideLabel.isNotBlank() &&
-                    converted.ideLabel != "K" &&
-                    converted.ideLabel != "Keyword"
-                ) {
+                if (converted.ideLabel.isNotBlank()) {
                     results.add(converted)
                 }
             } catch (e: Exception) {
@@ -106,7 +102,7 @@ class KotlinCompletionConverter {
                     ideLabel = classInfo.simpleName
                     detail = classInfo.fullyQualifiedName
                     insertText = classInfo.simpleName
-                    insertTextFormat = null
+                    insertTextFormat = IdeInsertTextFormat.PLAIN_TEXT
                     ideSortText = classInfo.simpleName
                     command = null
                     completionKind = IdeCompletionItemKind.CLASS

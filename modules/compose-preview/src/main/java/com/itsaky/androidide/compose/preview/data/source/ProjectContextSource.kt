@@ -4,6 +4,7 @@ import com.itsaky.androidide.projects.IProjectManager
 import com.itsaky.androidide.projects.android.AndroidModule
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.util.Properties
 
 data class ProjectContext(
     val modulePath: String?,
@@ -15,6 +16,11 @@ data class ProjectContext(
 )
 
 class ProjectContextSource {
+
+    companion object {
+        private val LOG = LoggerFactory.getLogger(ProjectContextSource::class.java)
+        private const val FORCE_GRADLE_DEXING_KEY = "android.compose.preview.useGradleDexing"
+    }
 
     fun resolveContext(filePath: String): ProjectContext {
         if (filePath.isBlank()) {
@@ -51,10 +57,11 @@ class ProjectContextSource {
 
         val intermediateClasspaths = module.getIntermediateClasspaths()
         val compileClasspaths = (module.getCompileClasspaths() + intermediateClasspaths).distinct()
+        val forceGradleDexing = isGradleDexingForced(projectManager.projectDir, file)
 
         val projectDexFiles = module.getRuntimeDexFiles().toList()
         val variantName = (module as? AndroidModule)?.getSelectedVariant()?.name ?: "debug"
-        val needsBuild = intermediateClasspaths.isEmpty()
+        val needsBuild = forceGradleDexing || intermediateClasspaths.isEmpty()
 
         LOG.info("Found {} total classpaths ({} compile, {} intermediate) for module: {}",
             compileClasspaths.size,
@@ -62,7 +69,13 @@ class ProjectContextSource {
             intermediateClasspaths.size,
             module.name)
         LOG.info("Found {} project DEX files for runtime loading", projectDexFiles.size)
-        LOG.info("Module path: {}, variant: {}, needsBuild: {}", module.path, variantName, needsBuild)
+        LOG.info(
+            "Module path: {}, variant: {}, needsBuild: {}, forceGradleDexing: {}",
+            module.path,
+            variantName,
+            needsBuild,
+            forceGradleDexing,
+        )
 
         if (!needsBuild) {
             intermediateClasspaths.forEach { cp ->
@@ -83,7 +96,33 @@ class ProjectContextSource {
         )
     }
 
-    companion object {
-        private val LOG = LoggerFactory.getLogger(ProjectContextSource::class.java)
+    private fun isGradleDexingForced(projectDir: File, sourceFile: File): Boolean {
+        val candidates = linkedSetOf<File>()
+        var current: File? = sourceFile.parentFile
+        while (current != null && current.path.startsWith(projectDir.path)) {
+            candidates.add(File(current, "gradle.properties"))
+            if (current == projectDir) break
+            current = current.parentFile
+        }
+        candidates.add(File(projectDir, "gradle.properties"))
+
+        for (propertiesFile in candidates) {
+            if (!propertiesFile.exists()) continue
+            val value =
+                runCatching {
+                        Properties().apply {
+                            propertiesFile.inputStream().use { load(it) }
+                        }[FORCE_GRADLE_DEXING_KEY]?.toString()?.trim()
+                    }
+                    .getOrNull()
+                    ?: continue
+
+            if (value.equals("true", ignoreCase = true)) {
+                LOG.info("Gradle dexing force-enabled by {}", propertiesFile.absolutePath)
+                return true
+            }
+        }
+
+        return false
     }
 }

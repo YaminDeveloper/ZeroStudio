@@ -375,6 +375,9 @@ abstract class ProjectHandlerActivity : BaseEditorActivity() {
       return
     }
 
+    // 尽量在工程初始化流程最早阶段拉起 Kotlin LSP，避免等待 Gradle model 完成后才启动。
+    com.itsaky.androidide.lsp.kotlin.KotlinLspIntegration.setup(this@ProjectHandlerActivity)
+
     if (editorViewModel.isInitializing) {
       log.warn("Project initialization already in progress. Skipping duplicate request.")
       return
@@ -541,10 +544,6 @@ abstract class ProjectHandlerActivity : BaseEditorActivity() {
             postProjectInit(false, null)
           }
           return@launch
-        }
-        
-        withContext(Dispatchers.Main) {
-            com.itsaky.androidide.lsp.kotlin.KotlinLspIntegration.setup(this@ProjectHandlerActivity)
         }
         
         manager.notifyProjectUpdate()
