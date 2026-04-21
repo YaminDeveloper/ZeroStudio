@@ -30,7 +30,6 @@ import io.github.rosemoe.sora.lang.completion.CompletionHelper
 import io.github.rosemoe.sora.lang.completion.CompletionItem
 import io.github.rosemoe.sora.lang.completion.CompletionPublisher
 import io.github.rosemoe.sora.lang.completion.createCompletionItemComparator
-import io.github.rosemoe.sora.lang.completion.filterCompletionItems
 import io.github.rosemoe.sora.lang.format.Formatter
 import io.github.rosemoe.sora.lang.smartEnter.NewlineHandler
 import io.github.rosemoe.sora.lsp.editor.completion.CompletionItemProvider
@@ -137,10 +136,9 @@ class LspLanguage(var editor: LspEditor) : Language {
       return
     }
 
-    filterCompletionItems(content, position, completionList).let { filteredList ->
-      publisher.setComparator(createCompletionItemComparator(filteredList))
-      publisher.addItems(filteredList)
-    }
+    // 不在客户端再次按前缀过滤，避免输入长度增加后候选被误删（例如 >3 字符时列表突然为空）。
+    publisher.setComparator(createCompletionItemComparator(completionList))
+    publisher.addItems(completionList)
 
     publisher.updateList()
   }

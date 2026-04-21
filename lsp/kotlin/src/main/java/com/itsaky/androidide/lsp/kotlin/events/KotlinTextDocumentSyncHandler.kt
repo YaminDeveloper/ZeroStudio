@@ -40,6 +40,7 @@ object KotlinTextDocumentSyncHandler {
 
   private val log = Logger.instance("KotlinTextDocumentSyncHandler")
   private val openedDocs = ConcurrentHashMap<Path, DocumentSnapshot>()
+  private val openedOnServer = ConcurrentHashMap.newKeySet<Path>()
 
   private data class DocumentSnapshot(
       val languageId: String = "kotlin",
@@ -57,18 +58,9 @@ object KotlinTextDocumentSyncHandler {
 
   fun onServerReady() {
     val server = getServer() ?: return
+    openedOnServer.clear()
     openedDocs.forEach { (path, snapshot) ->
-          runCatching {
-            server.didOpen(
-                DidOpenTextDocumentParams(
-                    file = path,
-                    languageId = snapshot.languageId,
-                    version = snapshot.version,
-                    text = snapshot.text,
-                ),
-            )
-          }
-          .onFailure { log.error("Failed to replay didOpen for ${path.fileName}", it) }
+      dispatchDidOpen(server, path, snapshot)
     }
   }
 
@@ -92,14 +84,7 @@ object KotlinTextDocumentSyncHandler {
 
     val server = getServer() ?: return
 
-    server.didOpen(
-        DidOpenTextDocumentParams(
-            file = event.openedFile,
-            languageId = "kotlin",
-            version = event.version,
-            text = event.text,
-        )
-    )
+    dispatchDidOpen(server, event.openedFile, openedDocs[event.openedFile] ?: return)
   }
 
   @Subscribe(threadMode = ThreadMode.ASYNC)
@@ -114,12 +99,19 @@ object KotlinTextDocumentSyncHandler {
         )
 
     val server = getServer() ?: return
+    val path = event.changedFile
+    val snapshot = openedDocs[path] ?: return
+    if (!openedOnServer.contains(path)) {
+      // 某些情况下（服务重启/时序竞态）会先收到 didChange，再收到 didOpen。这里兜底补发。
+      dispatchDidOpen(server, path, snapshot)
+      if (!openedOnServer.contains(path)) return
+    }
 
     // AndroidIDE 当前提供的是全量替换事件 (newText)，我们将整个文本作为一个 ContentChangeEvent 下发
     val changeEvent = TextDocumentContentChangeEvent(text = newText)
     server.didChange(
         DidChangeTextDocumentParams(
-            file = event.changedFile,
+            file = path,
             version = event.version,
             contentChanges = listOf(changeEvent),
         )
@@ -130,6 +122,7 @@ object KotlinTextDocumentSyncHandler {
   fun onDocumentClose(event: DocumentCloseEvent) {
     if (!isKotlinFile(event.closedFile.toString())) return
     openedDocs.remove(event.closedFile)
+    openedOnServer.remove(event.closedFile)
     val server = getServer() ?: return
 
     server.didClose(DidCloseTextDocumentParams(file = event.closedFile))
@@ -147,5 +140,20 @@ object KotlinTextDocumentSyncHandler {
             text = null,
         )
     )
+  }
+
+  private fun dispatchDidOpen(server: KotlinLanguageServerImpl, path: Path, snapshot: DocumentSnapshot) {
+    runCatching {
+          server.didOpen(
+              DidOpenTextDocumentParams(
+                  file = path,
+                  languageId = snapshot.languageId,
+                  version = snapshot.version,
+                  text = snapshot.text,
+              ),
+          )
+          openedOnServer.add(path)
+        }
+        .onFailure { log.error("Failed to send didOpen for ${path.fileName}", it) }
   }
 }

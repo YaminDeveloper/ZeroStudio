@@ -23,7 +23,6 @@ import com.itsaky.androidide.lsp.api.ILanguageServerRegistry
 import com.itsaky.androidide.lsp.kotlin.KotlinLanguageServerImpl
 import com.itsaky.androidide.lsp.models.CompletionParams
 import com.itsaky.androidide.lsp.models.CompletionResult
-import com.itsaky.androidide.lsp.models.MatchLevel
 import com.itsaky.androidide.utils.Logger
 
 /** @author android_zero */
@@ -52,27 +51,9 @@ class KotlinCompletionProvider : AbstractServiceProvider(), ICompletionProvider 
           ILanguageServerRegistry.getDefault().getServer("kotlin-lsp") as? KotlinLanguageServerImpl
               ?: return CompletionResult.EMPTY
 
-      val result = server.complete(params)
-      val prefix = params.prefix ?: ""
-
-      if (prefix.isNotEmpty()) {
-        return CompletionResult.mapAndFilter(result, prefix) { item ->
-          val strictMode = prefix.length < 1 || item.ideLabel.contains(" ")
-
-          item.matchLevel =
-              if (strictMode) {
-                if (item.insertText.startsWith(prefix, ignoreCase = true)) {
-                  MatchLevel.CASE_INSENSITIVE_PREFIX
-                } else {
-                  MatchLevel.NO_MATCH
-                }
-              } else {
-                matchLevel(item.insertText, prefix)
-              }
-        }
-      }
-
-      return result
+      // 直接返回 Kotlin LSP + 增强转换后的原始结果，不在 Provider 层做二次过滤，
+      // 避免屏蔽来源候选项（例如 import/FQN 相关提示）。
+      return server.complete(params)
     } catch (e: Exception) {
       log.error("Exception occurred during Kotlin completion resolution", e)
       return CompletionResult.EMPTY

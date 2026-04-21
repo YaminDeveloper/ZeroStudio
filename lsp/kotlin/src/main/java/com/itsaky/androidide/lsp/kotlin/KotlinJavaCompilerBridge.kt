@@ -21,6 +21,7 @@ import com.itsaky.androidide.lsp.java.JavaCompilerProvider
 import com.itsaky.androidide.lsp.java.compiler.JavaCompilerService
 import com.itsaky.androidide.projects.IWorkspace
 import com.itsaky.androidide.projects.android.AndroidModule
+import java.util.Locale
 import org.slf4j.LoggerFactory
 
 /**
@@ -67,10 +68,13 @@ class KotlinJavaCompilerBridge(private val workspace: IWorkspace) {
   fun findClassesByPrefix(prefix: String): List<ClassInfo> {
     if (prefix.isEmpty()) return emptyList()
     val allClasses = getAllAvailableClasses()
+    val normalizedPrefix = prefix.lowercase(Locale.ROOT)
     return allClasses
         .filter { className ->
           val simpleName = className.substringAfterLast('.')
-          simpleName.startsWith(prefix, ignoreCase = false)
+          simpleName.startsWith(prefix, ignoreCase = true) ||
+              simpleName.lowercase(Locale.ROOT).contains(normalizedPrefix) ||
+              className.lowercase(Locale.ROOT).contains(normalizedPrefix)
         }
         .map { className ->
           ClassInfo(
@@ -79,6 +83,15 @@ class KotlinJavaCompilerBridge(private val workspace: IWorkspace) {
               packageName = className.substringBeforeLast('.', ""),
           )
         }
+        .sortedWith(
+            compareBy<ClassInfo> {
+                  !it.simpleName.startsWith(prefix, ignoreCase = true)
+                }
+                .thenBy { !it.fullyQualifiedName.startsWith(prefix, ignoreCase = true) }
+                .thenBy { it.simpleName.length }
+                .thenBy { it.fullyQualifiedName }
+        )
+        .take(200)
   }
 
   data class ClassInfo(
