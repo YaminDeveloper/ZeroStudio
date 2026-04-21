@@ -276,7 +276,13 @@ constructor(
     val allowCommandExecution: Boolean = false,
 )
 
-data class Command(var title: String, var command: String) {
+data class Command(
+    var title: String,
+    var command: String,
+    var arguments: List<Any?>? = null,
+) {
+  constructor(title: String, command: String) : this(title, command, null)
+
   companion object {
 
     /** Action for triggering a signature help request to the language server. */

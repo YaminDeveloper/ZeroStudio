@@ -45,6 +45,7 @@ import com.itsaky.androidide.lsp.models.DidCloseTextDocumentParams
 import com.itsaky.androidide.lsp.models.DidOpenTextDocumentParams
 import com.itsaky.androidide.lsp.models.DidSaveTextDocumentParams
 import com.itsaky.androidide.lsp.models.DocumentLink
+import com.itsaky.androidide.lsp.models.ExecuteCommandParams
 import com.itsaky.androidide.lsp.models.DocumentSymbolsResult
 import com.itsaky.androidide.lsp.models.ExpandSelectionParams
 import com.itsaky.androidide.lsp.models.FoldingRange
@@ -57,6 +58,7 @@ import com.itsaky.androidide.lsp.models.ReferenceParams
 import com.itsaky.androidide.lsp.models.ReferenceResult
 import com.itsaky.androidide.lsp.models.RenameParams
 import com.itsaky.androidide.lsp.models.SelectionRange
+import com.itsaky.androidide.lsp.models.CodeActionItem
 import com.itsaky.androidide.lsp.models.SelectionRangesParams
 import com.itsaky.androidide.lsp.models.SemanticTokens
 import com.itsaky.androidide.lsp.models.SemanticTokensDelta
@@ -270,6 +272,22 @@ interface ILanguageServer {
   /** Type hierarchy prepare. */
   suspend fun typeHierarchy(params: DefinitionParams): List<TypeHierarchyItem> {
     return emptyList()
+  }
+
+  /**
+   * Execute a workspace command on server side (LSP: workspace/executeCommand).
+   *
+   * Implementations should return any protocol-compatible value (including `null`).
+   */
+  suspend fun executeCommand(params: ExecuteCommandParams): Any? {
+    return null
+  }
+
+  /**
+   * Resolve additional code action information lazily (LSP: codeAction/resolve).
+   */
+  suspend fun resolveCodeAction(action: CodeActionItem): CodeActionItem {
+    return action
   }
 
   fun handleFailure(failure: LSPFailure?): Boolean {

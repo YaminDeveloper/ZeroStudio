@@ -19,6 +19,7 @@ package com.itsaky.androidide.lsp.api;
 
 import androidx.annotation.Nullable;
 import com.itsaky.androidide.lsp.models.CodeActionItem;
+import com.itsaky.androidide.lsp.models.Command;
 import com.itsaky.androidide.lsp.models.DiagnosticItem;
 import com.itsaky.androidide.lsp.models.DiagnosticResult;
 import com.itsaky.androidide.lsp.models.PerformCodeActionParams;
@@ -101,6 +102,10 @@ public interface ILanguageClient {
    * @param locations The location to show.
    */
   void showLocations(List<Location> locations);
+
+
+  /** Execute a command returned by server (completion/codeAction/codeLens/etc). */
+  default void executeCommand(@Nullable Command command) {}
 
   /** Apply a workspace edit (documentChanges/resource operations). */
   default boolean applyWorkspaceEdit(WorkspaceEdit edit) {

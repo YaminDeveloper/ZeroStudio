@@ -33,6 +33,7 @@ import com.itsaky.androidide.editor.ui.IDEEditor;
 import com.itsaky.androidide.fragments.sheets.ProgressSheet;
 import com.itsaky.androidide.lsp.api.ILanguageClient;
 import com.itsaky.androidide.lsp.models.CodeActionItem;
+import com.itsaky.androidide.lsp.models.Command;
 import com.itsaky.androidide.lsp.models.DiagnosticItem;
 import com.itsaky.androidide.lsp.models.DiagnosticResult;
 import com.itsaky.androidide.lsp.models.LogMessageParams;
@@ -192,8 +193,7 @@ public void publishDiagnostics(DiagnosticResult result) {
     if (!params.getAsync()) {
       applyActionEdits(editor, action);
       if (editor != null) {
-        action.getCommand();
-        editor.executeCommand(action.getCommand());
+        executeCommand(action.getCommand());
       }
       return;
     }
@@ -212,7 +212,7 @@ public void publishDiagnostics(DiagnosticResult result) {
             LOG.error("Unable to perform code action result={}", result, throwable);
             FlashbarActivityUtilsKt.flashError(this.activity, string.msg_cannot_perform_fix);
           } else if (editor != null) {
-            editor.executeCommand(action.getCommand());
+            executeCommand(action.getCommand());
           }
         });
   }
@@ -472,6 +472,26 @@ public void publishDiagnostics(DiagnosticResult result) {
   private Unit noOp(final Object obj) {
     return Unit.INSTANCE;
   }
+
+  @Override
+  public void executeCommand(@Nullable Command command) {
+    if (command == null || !canUseActivity()) {
+      return;
+    }
+
+    final var currentEditor = this.activity.getCurrentEditor();
+    final var editor = currentEditor != null ? currentEditor.getEditor() : null;
+    if (editor == null) {
+      return;
+    }
+
+    try {
+      editor.executeCommand(command);
+    } catch (Throwable th) {
+      LOG.error("Failed to execute LSP command: {}", command.getCommand(), th);
+    }
+  }
+
   @Override
   public boolean applyWorkspaceEdit(WorkspaceEdit edit) {
     if (edit == null || edit.getDocumentChanges() == null || edit.getDocumentChanges().isEmpty()) {
