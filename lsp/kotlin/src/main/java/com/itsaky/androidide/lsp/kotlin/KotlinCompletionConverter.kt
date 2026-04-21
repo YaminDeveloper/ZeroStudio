@@ -106,7 +106,7 @@ class KotlinCompletionConverter {
                     ideLabel = classInfo.simpleName
                     detail = classInfo.fullyQualifiedName
                     insertText = classInfo.simpleName
-                    insertTextFormat = null
+                    insertTextFormat = IdeInsertTextFormat.PLAIN_TEXT
                     ideSortText = classInfo.simpleName
                     command = null
                     completionKind = IdeCompletionItemKind.CLASS
