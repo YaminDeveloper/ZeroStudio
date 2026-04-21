@@ -1,6 +1,7 @@
 package com.itsaky.androidide.app
 
 import android.app.Application
+import com.itsaky.androidide.BuildConfig
 
 /** 二阶段后半段：业务模块级自定义埋点。 */
 object MatrixApmTracker {
@@ -8,12 +9,14 @@ object MatrixApmTracker {
   @Volatile private var issueStore: MatrixIssueStore? = null
 
   fun init(application: Application) {
+    if (!BuildConfig.DEBUG) return
     if (issueStore == null) {
       issueStore = MatrixIssueStore(application)
     }
   }
 
   fun reportModuleEvent(module: String, event: String, costMs: Long? = null, extra: String? = null) {
+    if (!BuildConfig.DEBUG) return
     val payload =
         buildString {
           append("event=").append(event)

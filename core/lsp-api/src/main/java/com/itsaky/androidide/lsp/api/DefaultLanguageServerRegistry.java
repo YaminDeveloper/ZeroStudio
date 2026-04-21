@@ -29,6 +29,7 @@ import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -126,7 +127,15 @@ public class DefaultLanguageServerRegistry extends ILanguageServerRegistry {
     }
 
     ILogger.ROOT.debug("Dispatching ProjectInitializedEvent to language servers...");
-    for (final var server : mRegister.values()) {
+    final List<ILanguageServer> servers;
+    lock.readLock().lock();
+    try {
+      servers = List.copyOf(mRegister.values());
+    } finally {
+      lock.readLock().unlock();
+    }
+
+    for (final var server : servers) {
       server.setupWorkspace(workspace);
     }
   }

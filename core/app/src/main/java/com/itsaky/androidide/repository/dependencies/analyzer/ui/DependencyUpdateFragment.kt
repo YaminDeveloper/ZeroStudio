@@ -18,9 +18,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.pullrefresh.PullRefreshIndicator
-import androidx.compose.material.pullrefresh.pullRefresh
-import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -263,9 +260,8 @@ private fun DependencyListState(
     onApplyClicked: (UpdateReport, String) -> Unit
 ) {
   val listState = rememberLazyListState()
-  val pullRefreshState = rememberPullRefreshState(refreshing = isRefreshing, onRefresh = onRefresh)
 
-  Box(modifier = Modifier.fillMaxSize().padding(innerPadding).pullRefresh(pullRefreshState)) {
+  Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
     Column(modifier = Modifier.fillMaxSize()) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -281,6 +277,7 @@ private fun DependencyListState(
           onClick = { onFilterChange(DependencyFilter.ALL) },
           label = { Text("All ($totalCount)") }
       )
+      OutlinedButton(onClick = onRefresh, enabled = !isRefreshing) { Text("Refresh") }
     }
 
     if (!warningMessage.isNullOrBlank()) {
@@ -320,11 +317,6 @@ private fun DependencyListState(
         }
       }
     }
-    PullRefreshIndicator(
-        refreshing = isRefreshing,
-        state = pullRefreshState,
-        modifier = Modifier.align(Alignment.TopCenter)
-    )
   }
 }
 
