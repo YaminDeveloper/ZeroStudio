@@ -27,6 +27,9 @@ import com.itsaky.androidide.lsp.kotlin.ui.events.LspEventBus
 import com.itsaky.androidide.lsp.kotlin.ui.events.LspInstallRequestEvent
 import com.itsaky.androidide.projects.IProjectManager
 import com.itsaky.androidide.utils.Environment
+import com.termux.shared.shell.command.ExecutionCommand
+import com.termux.shared.termux.shell.TermuxShellManager
+import com.termux.shared.termux.shell.command.environment.TermuxShellEnvironment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -132,35 +135,8 @@ class KotlinServerProcessManager(private val context: Context) {
             // 获取 Android 环境所需的 Classpath
             val androidClasspath = classpathProvider?.getClasspath() ?: ""
 
-            // 构建原生 Process 进程：极其重要，必须将 redirectErrorStream 设置为 false！
-            // 因为 KLS 的日志和异常输出在 stderr 中，如果合并到 stdout(LSP管道)，会导致 LSP4J JSON 解析崩溃！
-            val pb = ProcessBuilder("sh", launcherScript.absolutePath).apply {
-                directory(Environment.KOTLIN_LSP_HOME)
-                environment().apply {
-                    put("JAVA_HOME", Environment.JAVA_HOME.absolutePath)
-                    put("PATH", "${Environment.BIN_DIR.absolutePath}:${Environment.JAVA_HOME.absolutePath}/bin:${System.getenv("PATH")}")
-                    val javaToolOptions =
-                        listOf(
-                                get("JAVA_TOOL_OPTIONS"),
-                                "-Dsqlite.purejava=true",
-                                "-Dorg.sqlite.tmpdir=${context.cacheDir.absolutePath}",
-                            )
-                            .filterNotNull()
-                            .joinToString(" ")
-                            .trim()
-                    put("JAVA_TOOL_OPTIONS", javaToolOptions)
-                    put("ORG_SQLITE_PUREJAVA", "true")
-                    // 传递环境变量使 Server 使用我们在外部计算的 Classpath
-                    put("KOTLIN_LSP_DISABLE_DEPENDENCY_RESOLUTION", "true")
-                    put("KOTLIN_LSP_USE_PREDEFINED_CLASSPATH", "true")
-                    put("KOTLIN_LSP_CLASSPATH", androidClasspath)
-                    put("CLASSPATH", androidClasspath)
-                }
-                redirectErrorStream(false) // 绝对禁止合并流！
-            }
-
-            serverProcess = pb.start()
-            log.info("Kotlin LSP Native Process started successfully. PID: ${serverProcess?.hashCode()}")
+            serverProcess = startKotlinLspWithTermuxShellApi(launcherScript, androidClasspath)
+            log.info("Kotlin LSP process started with Termux shell API. PID: ${serverProcess?.hashCode()}")
             startStderrMonitor(serverProcess!!)
 
             // 初始化 LSP4J 通讯协议机制
@@ -180,8 +156,72 @@ class KotlinServerProcessManager(private val context: Context) {
             bindWorkspaceWhenReady()
             log.info("KotlinLanguageServerImpl successfully connected to LSP4J and registered to IDE.")
         } catch (e: Exception) {
-            log.error("Failed to launch Kotlin LSP Process via Native ProcessBuilder", e)
+            log.error("Failed to launch Kotlin LSP process with Termux shell API", e)
         }
+    }
+
+    /**
+     * 按 Termux Shell API 启动 Kotlin LSP。
+     * 要点：
+     * 1) 使用 TermuxShellEnvironment 生成专用环境变量；
+     * 2) 直接执行 bin 下 LAUNCHER_SCRIPT_NAME；
+     * 3) 保持 stderr 与 stdout 分离，避免污染 LSP JSON-RPC 通道。
+     */
+    private fun startKotlinLspWithTermuxShellApi(
+        launcherScript: File,
+        androidClasspath: String
+    ): Process {
+        val executionCommand =
+            ExecutionCommand(
+                TermuxShellManager.getNextShellId(),
+                launcherScript.absolutePath,
+                null,
+                null,
+                Environment.KOTLIN_LSP_HOME.absolutePath,
+                ExecutionCommand.Runner.APP_SHELL.runnerName,
+                false
+            ).apply {
+                commandLabel = "Kotlin Language Server"
+                shellName = "kotlin-lsp-daemon"
+                setShellCommandShellEnvironment = true
+            }
+
+        val termuxEnvironment = TermuxShellEnvironment()
+        val commandArgs =
+            termuxEnvironment.setupShellCommandArguments(
+                executionCommand.executable,
+                executionCommand.arguments
+            )
+        val shellEnv =
+            HashMap(termuxEnvironment.setupShellCommandEnvironment(context.applicationContext, executionCommand))
+
+        val kotlinLspJvmOptions =
+            listOf(
+                    shellEnv["KOTLIN_LANGUAGE_SERVER_OPTS"],
+                    "-Dsqlite.purejava=true",
+                    "-Dorg.sqlite.tmpdir=${context.cacheDir.absolutePath}",
+                    "-Djava.io.tmpdir=${context.cacheDir.absolutePath}",
+                )
+                .filterNotNull()
+                .joinToString(" ")
+                .trim()
+
+        shellEnv["JAVA_HOME"] = Environment.JAVA_HOME.absolutePath
+        shellEnv["KOTLIN_LANGUAGE_SERVER_OPTS"] = kotlinLspJvmOptions
+        shellEnv["ORG_SQLITE_PUREJAVA"] = "true"
+        shellEnv["KOTLIN_LSP_DISABLE_DEPENDENCY_RESOLUTION"] = "true"
+        shellEnv["KOTLIN_LSP_USE_PREDEFINED_CLASSPATH"] = "true"
+        shellEnv["KOTLIN_LSP_CLASSPATH"] = androidClasspath
+        shellEnv["CLASSPATH"] = androidClasspath
+
+        return ProcessBuilder(*commandArgs)
+            .directory(Environment.KOTLIN_LSP_HOME)
+            .apply {
+                environment().clear()
+                environment().putAll(shellEnv)
+                redirectErrorStream(false)
+            }
+            .start()
     }
 
     /**

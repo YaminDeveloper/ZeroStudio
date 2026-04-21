@@ -126,6 +126,7 @@ class IDEApplication : TermuxApplication() {
     }
 
     Environment.init(this)
+    MatrixApmInitializer.init(this)
   }
 
   /**

@@ -20,6 +20,7 @@ class KotlinAstAnalyzer : ScriptAnalyzer {
     if (!file.exists()) return Pair(repos, deps)
 
     val text = file.readText()
+    val versionVariables = extractVersionVariables(text)
     val parser = TSParser.create()
     parser.language = TSLanguageKotlin.getInstance()
     val tree = parser.parseString(null, text)
@@ -93,8 +94,19 @@ class KotlinAstAnalyzer : ScriptAnalyzer {
             val cleanStr = rawStr.trim('\"')
             val parts = cleanStr.split(":")
             if (parts.size >= 3) {
-              val version = parts[2]
-              val verStart = exprNode.startByte / 2 + rawStr.lastIndexOf(version)
+              val rawVersion = parts[2]
+              val variableName =
+                  Regex("""^\$(\w+)$|^\$\{(\w+)}$""")
+                      .matchEntire(rawVersion)
+                      ?.let { it.groupValues[1].ifBlank { it.groupValues[2] } }
+              val variable = variableName?.let { versionVariables[it] }
+              val version = variable?.first ?: rawVersion
+              val versionRange =
+                  variable?.second
+                      ?: run {
+                        val verStart = exprNode.startByte / 2 + rawStr.lastIndexOf(rawVersion)
+                        TextRange(verStart, verStart + rawVersion.length)
+                      }
 
               deps.add(
                   ScopedDependencyInfo(
@@ -105,7 +117,7 @@ class KotlinAstAnalyzer : ScriptAnalyzer {
                       declaredFile = file,
                       declarationType = DeclarationType.STRING_LITERAL,
                       // 修复：使用 versionDefinitionRange
-                      versionDefinitionRange = TextRange(verStart, verStart + version.length),
+                      versionDefinitionRange = versionRange,
                       statementTextRange = TextRange(callNode.startByte / 2, callNode.endByte / 2),
                   )
               )
@@ -131,6 +143,21 @@ class KotlinAstAnalyzer : ScriptAnalyzer {
         break
       }
     }
+  }
+
+  private fun extractVersionVariables(text: String): Map<String, Pair<String, TextRange>> {
+    val result = mutableMapOf<String, Pair<String, TextRange>>()
+    val pattern =
+        Regex(
+            """(?m)^\s*(?:val|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*["']([^"']+)["']\s*$"""
+        )
+    pattern.findAll(text).forEach { match ->
+      val name = match.groupValues[1]
+      val value = match.groupValues[2]
+      val start = match.range.first + match.value.indexOf(value)
+      result[name] = value to TextRange(start, start + value.length)
+    }
+    return result
   }
 
   private fun extractRepository(
