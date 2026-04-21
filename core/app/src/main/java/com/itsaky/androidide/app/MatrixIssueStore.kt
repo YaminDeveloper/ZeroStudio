@@ -5,6 +5,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import org.json.JSONObject
 import org.slf4j.LoggerFactory
 
 /** Matrix Issue 本地持久化（ndjson），用于二阶段全链路观测。 */
@@ -61,11 +62,15 @@ class MatrixIssueStore(private val application: Application) {
   }
 
   private fun parseLine(line: String): MatrixIssueRecord? {
-    val ts = Regex(""""ts":(\\d+)""").find(line)?.groupValues?.getOrNull(1)?.toLongOrNull()
-    val plugin = Regex(""""plugin":"([^"]*)"""").find(line)?.groupValues?.getOrNull(1)
-    val content = Regex(""""content":"(.*)"}$""").find(line)?.groupValues?.getOrNull(1)
-    if (ts == null || plugin == null || content == null) return null
-    return MatrixIssueRecord(ts, plugin, content)
+    return runCatching {
+          val obj = JSONObject(line)
+          val ts = obj.optLong("ts", -1L)
+          val plugin = obj.optString("plugin", "")
+          val content = obj.optString("content", "")
+          if (ts <= 0L || plugin.isBlank()) return null
+          MatrixIssueRecord(ts, plugin, content)
+        }
+        .getOrNull()
   }
 
   fun export(records: List<MatrixIssueRecord>, target: File): File {

@@ -1,6 +1,7 @@
 package com.itsaky.androidide.app
 
 import android.app.Application
+import com.itsaky.androidide.BuildConfig
 import java.lang.reflect.Proxy
 import org.slf4j.LoggerFactory
 
@@ -18,6 +19,10 @@ object MatrixApmInitializer {
   )
 
   fun init(application: Application) {
+    if (!BuildConfig.DEBUG) {
+      log.info("Matrix APM disabled for non-debug build")
+      return
+    }
     val apmConfig = MatrixApmConfig.load(application)
     val issueStore = MatrixIssueStore(application)
     issueStore.pruneOld(apmConfig.issueRetentionDays)

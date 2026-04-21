@@ -40,13 +40,23 @@ data class CodeActionItem(
     var title: String,
     var changes: List<DocumentChange>,
     var kind: CodeActionKind,
-    var command: Command,
+    var command: Command?,
+    var isPreferred: Boolean = false,
+    var disabledReason: String? = null,
+    var data: Any? = null,
 ) {
-  constructor() : this("", ArrayList(), None, Command("", ""))
+  constructor() : this("", ArrayList(), None, null, false, null, null)
 }
 
 enum class CodeActionKind {
   QuickFix,
+  Refactor,
+  RefactorExtract,
+  RefactorInline,
+  RefactorRewrite,
+  Source,
+  SourceOrganizeImports,
+  SourceFixAll,
   None,
 }
 

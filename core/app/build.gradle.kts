@@ -88,6 +88,10 @@ android {
           "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
       )
   packaging {
+    jniLibs {
+      // matrix-backtrace 与 zero-regular-preview 都携带 libc++_shared.so，合并时需去重
+      pickFirsts += setOf("lib/*/libc++_shared.so")
+    }
     resources {
       pickFirsts +=
           setOf(
@@ -148,14 +152,14 @@ dependencies {
   implementation(libs.common.utilcode)
   implementation(libs.common.glide)
   implementation(libs.common.jsoup)
-  implementation(libs.common.matrix.android.lib)
-  implementation(libs.common.matrix.android.commons)
-  implementation(libs.common.matrix.trace.canary)
-  implementation(libs.common.matrix.resource.canary)
-  implementation(libs.common.matrix.io.canary)
-  implementation(libs.common.matrix.sqlite.lint)
-  implementation(libs.common.matrix.battery.canary)
-  implementation(libs.common.matrix.traffic)
+  debugImplementation(libs.common.matrix.android.lib)
+  debugImplementation(libs.common.matrix.android.commons)
+  debugImplementation(libs.common.matrix.trace.canary)
+  debugImplementation(libs.common.matrix.resource.canary)
+  debugImplementation(libs.common.matrix.io.canary)
+  debugImplementation(libs.common.matrix.sqlite.lint)
+  debugImplementation(libs.common.matrix.battery.canary)
+  debugImplementation(libs.common.matrix.traffic)
   implementation(libs.common.kotlin.coroutines.android)
   implementation(libs.common.retrofit)
   implementation(libs.common.retrofit.gson)

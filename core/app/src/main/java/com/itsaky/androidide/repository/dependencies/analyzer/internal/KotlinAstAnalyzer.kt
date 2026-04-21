@@ -45,7 +45,7 @@ class KotlinAstAnalyzer : ScriptAnalyzer {
             nextBlock = funcName
           } else if (currentBlock == "dependencies") {
             if (DependencyDslConfigurations.isDependencyConfiguration(funcName)) {
-              extractDependency(node, funcName, text, file, deps)
+              extractDependency(node, funcName, text, file, deps, versionVariables)
             }
           } else if (currentBlock == "repositories" || currentBlock == "pluginManagement") {
             extractRepository(node, funcName, text, file, repos)
@@ -72,6 +72,7 @@ class KotlinAstAnalyzer : ScriptAnalyzer {
       text: String,
       file: File,
       deps: MutableList<ScopedDependencyInfo>,
+      versionVariables: Map<String, Pair<String, TextRange>>,
   ) {
     var argsNode: TSNode? = null
     for (i in 0 until callNode.childCount) {

@@ -288,6 +288,19 @@ abstract class LogViewFragment :
   }
 
   override fun clearOutput() {
-    _binding?.editor?.setText("")?.also { isEmpty = true }
+    logHandler.removeCallbacks(logRunnable)
+    cacheLock.withLock {
+      cache.clear()
+      cacheLineTrack.clear()
+      lastLog = -1L
+    }
+
+    ThreadUtils.runOnUiThread {
+      _binding?.editor?.let { editor ->
+        val text = editor.text
+        text.delete(0, text.length)
+        isEmpty = true
+      }
+    }
   }
 }
