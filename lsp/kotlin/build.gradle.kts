@@ -69,6 +69,7 @@ dependencies {
   api(projects.java.javacServices)
   api(projects.java.lsp)
   api(projects.termux.shell)
+  implementation(projects.termux.shared)
   api(projects.event.eventbusEvents)
 
   implementation(libs.composite.javac)
