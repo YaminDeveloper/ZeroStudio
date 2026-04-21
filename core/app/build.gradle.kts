@@ -88,6 +88,10 @@ android {
           "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
       )
   packaging {
+    jniLibs {
+      // matrix-backtrace 与 zero-regular-preview 都携带 libc++_shared.so，合并时需去重
+      pickFirsts += setOf("lib/*/libc++_shared.so")
+    }
     resources {
       pickFirsts +=
           setOf(
