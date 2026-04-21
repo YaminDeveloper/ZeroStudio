@@ -31,6 +31,7 @@ import io.github.rosemoe.sora.lsp.utils.createCompletionParams
 import io.github.rosemoe.sora.text.CharPosition
 import io.github.rosemoe.sora.util.Logger
 import java.util.concurrent.CompletableFuture
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.future.await
 import org.eclipse.lsp4j.CompletionContext
@@ -47,15 +48,24 @@ class CompletionEvent : AsyncEventListener() {
 
     val requestManager = editor.requestManager
 
+    val completionParams =
+        editor.uri.createCompletionParams(
+            position.asLspPosition(),
+            CompletionContext().apply { triggerCharacter = null },
+        )
+
+    var completionFuture = requestManager.completion(completionParams)
+    if (completionFuture == null) {
+      // 在编辑器刚启动、LSP 会话尚未完全绑定时，短暂重试，确保会主动向服务器发起 completion 请求。
+      for (i in 0 until 5) {
+        delay(120)
+        completionFuture = requestManager.completion(completionParams)
+        if (completionFuture != null) break
+      }
+    }
+
     val future =
-        requestManager
-            .completion(
-                editor.uri.createCompletionParams(
-                    position.asLspPosition(),
-                    CompletionContext().apply { triggerCharacter = null },
-                )
-            )
-            ?.thenApply {
+        completionFuture?.thenApply {
               if (it == null) {
                 return@thenApply emptyList()
               }
