@@ -68,6 +68,16 @@ class MatrixIssueStore(private val application: Application) {
     return MatrixIssueRecord(ts, plugin, content)
   }
 
+  fun export(records: List<MatrixIssueRecord>, target: File): File {
+    target.parentFile?.mkdirs()
+    val content =
+        records.joinToString(separator = "\n") {
+          "{\"ts\":${it.ts},\"plugin\":\"${escape(it.plugin)}\",\"content\":\"${escape(it.content)}\"}"
+        }
+    target.writeText(content)
+    return target
+  }
+
   private fun escape(value: String): String {
     return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
   }
