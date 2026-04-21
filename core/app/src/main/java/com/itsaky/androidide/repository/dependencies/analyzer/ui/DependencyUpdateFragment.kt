@@ -153,15 +153,15 @@ fun DependencyUpdateScreen(
         reports = emptyList()
         errorMessage = e.message ?: "Unknown error while loading dependencies."
         onFlashError("Dependency scan failed: ${errorMessage}")
-      // } finally {
+      } finally {
         // MatrixApmTracker.reportModuleEvent(
-            // module = "dependency-scan",
-            // event = if (errorMessage == null) "refresh_ok" else "refresh_error",
-            // costMs = System.currentTimeMillis() - scanStart,
-            // extra = "count=${reports.size}"
+        //     module = "dependency-scan",
+        //     event = if (errorMessage == null) "refresh_ok" else "refresh_error",
+        //     costMs = System.currentTimeMillis() - scanStart,
+        //     extra = "count=${reports.size}"
         // )
-        // isLoading = false
-      // }
+        isLoading = false
+      }
     }
   }
 
