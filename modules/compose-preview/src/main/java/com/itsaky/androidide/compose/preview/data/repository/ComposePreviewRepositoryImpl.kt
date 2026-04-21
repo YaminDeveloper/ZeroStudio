@@ -10,8 +10,6 @@ import com.itsaky.androidide.compose.preview.compiler.DexCache
 import com.itsaky.androidide.compose.preview.data.source.ProjectContext
 import com.itsaky.androidide.compose.preview.data.source.ProjectContextSource
 import com.itsaky.androidide.compose.preview.domain.model.ParsedPreviewSource
-import com.itsaky.androidide.lookup.Lookup
-import com.itsaky.androidide.projects.builder.BuildService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
@@ -37,8 +35,8 @@ class ComposePreviewRepositoryImpl(
 
     companion object {
         private val LOG = LoggerFactory.getLogger(ComposePreviewRepositoryImpl::class.java)
-        private val COMPILE_MODE_TAG_REGEX = Regex(
-            """@compose-preview-compile-mode\s*:\s*([A-Za-z0-9_-]+)""",
+        private val USE_GRADLE_DEX_TAG_REGEX = Regex(
+            """@compose-preview-use-gradle-dex\s*:\s*(true|false)""",
             RegexOption.IGNORE_CASE
         )
     }
@@ -125,7 +123,7 @@ class ComposePreviewRepositoryImpl(
             val workDir = requireInitialized(this@ComposePreviewRepositoryImpl.workDir, "workDir")
             val classpathManager = requireInitialized(this@ComposePreviewRepositoryImpl.classpathManager, "classpathManager")
             val context = requireInitialized(projectContext, "projectContext")
-            val compileMode = resolveCompileMode(source)
+            val useGradleDex = shouldUseGradleDex(source)
 
             val fileName = parsedSource.className?.removeSuffix("Kt") ?: "Preview"
             val generatedClassName = "${fileName}Kt"
@@ -133,8 +131,8 @@ class ComposePreviewRepositoryImpl(
 
             val sourceHash = cache.computeSourceHash(source)
 
-            if (compileMode == PreviewCompileMode.GRADLE_TASK_DEX) {
-                LOG.info("Using gradle-dex compile mode for {}", fullClassName)
+            if (useGradleDex) {
+                LOG.info("Using direct gradle-dex mode for {}", fullClassName)
                 return@runCatching compileUsingGradleDexMode(fullClassName, context)
             }
 
@@ -268,13 +266,9 @@ class ComposePreviewRepositoryImpl(
         }
     }
 
-    private fun resolveCompileMode(source: String): PreviewCompileMode {
-        val modeTag = COMPILE_MODE_TAG_REGEX.find(source)?.groupValues?.get(1)?.trim()?.lowercase()
-        return when (modeTag) {
-            "gradle-dex", "gradle_task_dex", "gradle-task-dex" -> PreviewCompileMode.GRADLE_TASK_DEX
-            "kotlinc", "internal", "internal-kotlinc" -> PreviewCompileMode.INTERNAL_KOTLINC
-            else -> PreviewCompileMode.INTERNAL_KOTLINC
-        }
+    private fun shouldUseGradleDex(source: String): Boolean {
+        val raw = USE_GRADLE_DEX_TAG_REGEX.find(source)?.groupValues?.get(1) ?: return false
+        return raw.equals("true", ignoreCase = true)
     }
 
     private fun compileUsingGradleDexMode(
@@ -305,26 +299,89 @@ class ComposePreviewRepositoryImpl(
     }
 
     private fun runGradleDexTasks(context: ProjectContext) {
-        val buildService = Lookup.getDefault().lookup(BuildService.KEY_BUILD_SERVICE)
-            ?: throw CompilationException("BuildService is unavailable for gradle-dex mode.")
-
-        val capitalizedVariant = context.variantName.replaceFirstChar { it.uppercaseChar() }
-        val task = if (!context.modulePath.isNullOrBlank()) {
-            "${context.modulePath}:assemble$capitalizedVariant"
-        } else {
-            "assemble$capitalizedVariant"
+        val filePath = openedFilePath
+            ?: throw CompilationException("Opened source file path is unavailable for gradle-dex mode.")
+        val projectRoot = locateProjectRoot(filePath)
+            ?: throw CompilationException("Cannot locate Gradle project root for gradle-dex mode.")
+        val gradlew = File(projectRoot, "gradlew")
+        if (!gradlew.exists()) {
+            throw CompilationException("gradlew not found in project root: ${projectRoot.absolutePath}")
         }
 
-        LOG.info("Running Gradle task for compose preview gradle-dex mode: {}", task)
-        val result = buildService.executeTasks(task).get(15, TimeUnit.MINUTES)
-        if (!result.isSuccessful) {
-            throw CompilationException("Gradle task failed in gradle-dex mode: $task")
+        val capitalizedVariant = context.variantName.replaceFirstChar { it.uppercaseChar() }
+        val modulePath = context.modulePath?.takeIf { it.isNotBlank() }
+        val dexTasks = findDexTasks(projectRoot, gradlew, modulePath, capitalizedVariant)
+        if (dexTasks.isEmpty()) {
+            throw CompilationException("No dex tasks found for $modulePath/$capitalizedVariant in gradle-dex mode.")
+        }
+
+        val command = listOf(gradlew.absolutePath) + dexTasks
+        LOG.info("Running direct Gradle dex tasks: {}", command.joinToString(" "))
+
+        val process = ProcessBuilder(command)
+            .directory(projectRoot)
+            .redirectErrorStream(true)
+            .start()
+
+        val output = process.inputStream.bufferedReader().readText()
+        val completed = process.waitFor(15, TimeUnit.MINUTES)
+        if (!completed) {
+            process.destroyForcibly()
+            throw CompilationException("Gradle dex tasks timed out: ${dexTasks.joinToString(" ")}")
+        }
+        if (process.exitValue() != 0) {
+            throw CompilationException("Gradle dex tasks failed (${process.exitValue()}):\n$output")
         }
     }
 
-    private enum class PreviewCompileMode {
-        INTERNAL_KOTLINC,
-        GRADLE_TASK_DEX
+    private fun findDexTasks(
+        projectRoot: File,
+        gradlew: File,
+        modulePath: String?,
+        variantName: String
+    ): List<String> {
+        val scopedTaskPrefix = modulePath?.let { "$it:" } ?: ""
+        val listTask = modulePath?.let { "$it:tasks" } ?: "tasks"
+        val listCmd = listOf(gradlew.absolutePath, listTask, "--all")
+        val process = ProcessBuilder(listCmd)
+            .directory(projectRoot)
+            .redirectErrorStream(true)
+            .start()
+
+        val tasksOutput = process.inputStream.bufferedReader().readText()
+        val completed = process.waitFor(2, TimeUnit.MINUTES)
+        if (!completed || process.exitValue() != 0) {
+            LOG.warn("Failed to list gradle tasks for {}. Fallback to assemble{}", modulePath ?: "root", variantName)
+            return listOf("${scopedTaskPrefix}assemble$variantName")
+        }
+
+        val taskRegex = Regex("""^(\S+)""")
+        val preferredKeywords = listOf("dex", "mergeprojectdex", "mergedex", "dexbuilder")
+        val variantLower = variantName.lowercase()
+
+        val matchedTasks = tasksOutput.lineSequence()
+            .mapNotNull { line -> taskRegex.find(line.trim())?.groupValues?.get(1) }
+            .filter { task ->
+                val lower = task.lowercase()
+                lower.startsWith(scopedTaskPrefix.lowercase()) &&
+                    preferredKeywords.any { keyword -> lower.contains(keyword) } &&
+                    lower.contains(variantLower)
+            }
+            .distinct()
+            .toList()
+
+        return if (matchedTasks.isNotEmpty()) matchedTasks else listOf("${scopedTaskPrefix}assemble$variantName")
+    }
+
+    private fun locateProjectRoot(filePath: String): File? {
+        var dir = File(filePath).parentFile
+        while (dir != null) {
+            if (File(dir, "settings.gradle").exists() || File(dir, "settings.gradle.kts").exists()) {
+                return dir
+            }
+            dir = dir.parentFile
+        }
+        return null
     }
 
     override fun computeSourceHash(source: String): String {
