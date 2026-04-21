@@ -25,6 +25,7 @@ import com.itsaky.androidide.lsp.models.CompletionParams
 import com.itsaky.androidide.lsp.models.CompletionResult
 import com.itsaky.androidide.lsp.models.MatchLevel
 import com.itsaky.androidide.utils.Logger
+import java.util.Locale
 
 /** @author android_zero */
 class KotlinCompletionProvider : AbstractServiceProvider(), ICompletionProvider {
@@ -56,20 +57,30 @@ class KotlinCompletionProvider : AbstractServiceProvider(), ICompletionProvider 
       val prefix = params.prefix ?: ""
 
       if (prefix.isNotEmpty()) {
-        return CompletionResult.mapAndFilter(result, prefix) { item ->
-          val strictMode = prefix.length < 1 || item.ideLabel.contains(" ")
-
-          item.matchLevel =
-              if (strictMode) {
-                if (item.insertText.startsWith(prefix, ignoreCase = true)) {
-                  MatchLevel.CASE_INSENSITIVE_PREFIX
-                } else {
-                  MatchLevel.NO_MATCH
+        val normalizedPrefix = prefix.lowercase(Locale.ROOT)
+        val filtered =
+            result.items
+                .map { item ->
+                  val insert = item.insertText
+                  val label = item.ideLabel
+                  val detail = item.detail ?: ""
+                  item.matchLevel =
+                      when {
+                        insert.startsWith(prefix, ignoreCase = true) ||
+                            label.startsWith(prefix, ignoreCase = true) ->
+                            MatchLevel.CASE_INSENSITIVE_PREFIX
+                        insert.contains(prefix, ignoreCase = true) ||
+                            label.contains(prefix, ignoreCase = true) ->
+                            MatchLevel.PARTIAL_MATCH
+                        detail.lowercase(Locale.ROOT).contains(normalizedPrefix) ->
+                            MatchLevel.PARTIAL_MATCH
+                        else -> MatchLevel.NO_MATCH
+                      }
+                  item
                 }
-              } else {
-                matchLevel(item.insertText, prefix)
-              }
-        }
+                .filter { it.matchLevel != MatchLevel.NO_MATCH }
+
+        return CompletionResult(filtered)
       }
 
       return result

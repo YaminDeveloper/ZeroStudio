@@ -88,6 +88,7 @@ import org.eclipse.lsp4j.PublishDiagnosticsParams
 import org.eclipse.lsp4j.ReferenceContext
 import org.eclipse.lsp4j.ShowMessageRequestParams
 import org.eclipse.lsp4j.SignatureHelpCapabilities
+import org.eclipse.lsp4j.SignatureHelpParams as LspSignatureHelpParams
 import org.eclipse.lsp4j.TextDocumentClientCapabilities
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.TextDocumentItem
@@ -440,7 +441,54 @@ class KotlinLanguageServerImpl(
 
     override suspend fun expandSelection(params: ExpandSelectionParams): Range = params.selection
 
-    override suspend fun signatureHelp(params: SignatureHelpParams): SignatureHelp = SignatureHelp(emptyList(), 0, 0)
+    override suspend fun signatureHelp(params: SignatureHelpParams): SignatureHelp = withContext(Dispatchers.IO) {
+        if (!isInitialized) return@withContext SignatureHelp(emptyList(), 0, 0)
+        try {
+            val req = LspSignatureHelpParams(
+                TextDocumentIdentifier(params.file.toUri().toString()),
+                params.position.toLsp4j()
+            )
+            val result = requireServer().textDocumentService.signatureHelp(req).await()
+            if (result == null) {
+                return@withContext SignatureHelp(emptyList(), 0, 0)
+            }
+
+            val signatures = result.signatures?.map { sig ->
+                com.itsaky.androidide.lsp.models.SignatureInformation(
+                    label = sig.label ?: "",
+                    documentation = sig.documentation.toIdeMarkup(),
+                    parameters = sig.parameters?.map { param ->
+                        val label = when (val pLabel = param.label) {
+                            is String -> pLabel
+                            is List<*> -> {
+                                if (pLabel.size >= 2) {
+                                    val start = (pLabel[0] as? Number)?.toInt() ?: 0
+                                    val end = (pLabel[1] as? Number)?.toInt() ?: 0
+                                    val safeStart = start.coerceIn(0, (sig.label ?: "").length)
+                                    val safeEnd = end.coerceIn(safeStart, (sig.label ?: "").length)
+                                    (sig.label ?: "").substring(safeStart, safeEnd)
+                                } else ""
+                            }
+                            else -> ""
+                        }
+                        com.itsaky.androidide.lsp.models.ParameterInformation(
+                            label = label,
+                            documentation = param.documentation.toIdeMarkup(),
+                        )
+                    } ?: emptyList()
+                )
+            } ?: emptyList()
+
+            SignatureHelp(
+                signatures = signatures,
+                activeSignature = result.activeSignature ?: 0,
+                activeParameter = result.activeParameter ?: 0,
+            )
+        } catch (e: Exception) {
+            log.error("SignatureHelp request failed", e)
+            SignatureHelp(emptyList(), 0, 0)
+        }
+    }
 
     override suspend fun rename(params: RenameParams): WorkspaceEdit = withContext(Dispatchers.IO) {
         if (!isInitialized) return@withContext WorkspaceEdit()
@@ -527,5 +575,16 @@ class KotlinLanguageServerImpl(
             severity = mappedSeverity,
             tags = emptyList()
         )
+    }
+
+    private fun org.eclipse.lsp4j.jsonrpc.messages.Either<String, org.eclipse.lsp4j.MarkupContent>?.toIdeMarkup(): MarkupContent {
+        if (this == null) return MarkupContent("", MarkupKind.PLAIN)
+        return if (this.isLeft) {
+            MarkupContent(this.left ?: "", MarkupKind.PLAIN)
+        } else {
+            val markup = this.right
+            val kind = if (markup?.kind == "markdown") MarkupKind.MARKDOWN else MarkupKind.PLAIN
+            MarkupContent(markup?.value ?: "", kind)
+        }
     }
 }
