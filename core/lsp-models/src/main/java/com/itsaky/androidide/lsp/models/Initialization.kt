@@ -29,6 +29,9 @@ data class ServerCapabilities(
     var signatureHelpAvailable: Boolean,
     var codeAnalysisAvailable: Boolean,
     var smartSelectionsEnabled: Boolean,
+    var executeCommandAvailable: Boolean,
+    var supportedCommands: List<String>,
+    var codeActionResolveAvailable: Boolean,
 ) {
-  constructor() : this(false, false, false, false, false, false, false)
+  constructor() : this(false, false, false, false, false, false, false, false, emptyList(), false)
 }
