@@ -89,7 +89,7 @@ class ComposeCompiler(
                     diagnostics = listOf(
                         CompileDiagnostic(
                             CompileDiagnostic.Severity.ERROR,
-                            "Kotlin compiler not found in local Maven repository. Build any project first.",
+                            "Kotlin compiler not found in Gradle cache (.gradle/caches/modules-2/files-2.1). Build/sync any project first.",
                             null, null, null
                         )
                     )

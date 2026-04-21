@@ -215,7 +215,7 @@ class CompilerDaemon(
         val javac = File(Environment.JAVA.parentFile, "javac")
         classpathManager.ensureCompilerArtifactsAvailable()
         val kotlinCompilerJar = classpathManager.getKotlinCompiler()
-            ?: throw RuntimeException("Kotlin compiler not found in local Maven repository. Build any project first.")
+            ?: throw RuntimeException("Kotlin compiler not found in Gradle cache (.gradle/caches/modules-2/files-2.1). Build/sync any project first.")
 
         val command = listOf(
             javac.absolutePath,
