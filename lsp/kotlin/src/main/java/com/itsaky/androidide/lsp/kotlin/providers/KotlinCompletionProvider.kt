@@ -23,9 +23,7 @@ import com.itsaky.androidide.lsp.api.ILanguageServerRegistry
 import com.itsaky.androidide.lsp.kotlin.KotlinLanguageServerImpl
 import com.itsaky.androidide.lsp.models.CompletionParams
 import com.itsaky.androidide.lsp.models.CompletionResult
-import com.itsaky.androidide.lsp.models.MatchLevel
 import com.itsaky.androidide.utils.Logger
-import java.util.Locale
 
 /** @author android_zero */
 class KotlinCompletionProvider : AbstractServiceProvider(), ICompletionProvider {
@@ -53,37 +51,9 @@ class KotlinCompletionProvider : AbstractServiceProvider(), ICompletionProvider 
           ILanguageServerRegistry.getDefault().getServer("kotlin-lsp") as? KotlinLanguageServerImpl
               ?: return CompletionResult.EMPTY
 
-      val result = server.complete(params)
-      val prefix = params.prefix ?: ""
-
-      if (prefix.isNotEmpty()) {
-        val normalizedPrefix = prefix.lowercase(Locale.ROOT)
-        val filtered =
-            result.items
-                .map { item ->
-                  val insert = item.insertText
-                  val label = item.ideLabel
-                  val detail = item.detail ?: ""
-                  item.matchLevel =
-                      when {
-                        insert.startsWith(prefix, ignoreCase = true) ||
-                            label.startsWith(prefix, ignoreCase = true) ->
-                            MatchLevel.CASE_INSENSITIVE_PREFIX
-                        insert.contains(prefix, ignoreCase = true) ||
-                            label.contains(prefix, ignoreCase = true) ->
-                            MatchLevel.PARTIAL_MATCH
-                        detail.lowercase(Locale.ROOT).contains(normalizedPrefix) ->
-                            MatchLevel.PARTIAL_MATCH
-                        else -> MatchLevel.NO_MATCH
-                      }
-                  item
-                }
-                .filter { it.matchLevel != MatchLevel.NO_MATCH }
-
-        return CompletionResult(filtered)
-      }
-
-      return result
+      // 直接返回 Kotlin LSP + 增强转换后的原始结果，不在 Provider 层做二次过滤，
+      // 避免屏蔽来源候选项（例如 import/FQN 相关提示）。
+      return server.complete(params)
     } catch (e: Exception) {
       log.error("Exception occurred during Kotlin completion resolution", e)
       return CompletionResult.EMPTY
