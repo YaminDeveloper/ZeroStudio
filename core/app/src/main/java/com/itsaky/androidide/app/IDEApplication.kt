@@ -127,15 +127,7 @@ class IDEApplication : TermuxApplication() {
     }
 
     Environment.init(this)
-    if (BuildConfig.DEBUG) {
-      MatrixApmTracker.init(this)
-      MatrixApmInitializer.init(this)
-      MatrixApmTracker.reportModuleEvent(
-          module = "app",
-          event = "startup",
-          costMs = System.currentTimeMillis() - bootStart,
-      )
-    }
+
   }
 
   /**

@@ -28,7 +28,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-
   // 全局变量环境
   id("build-logic.root-project")
 
@@ -40,7 +39,6 @@ plugins {
   alias(libs.plugins.com.google.devtools.ksp) apply false
   alias(libs.plugins.google.services) apply false
   alias(libs.plugins.firebase.crashlytics) apply false
-  id("com.google.firebase.firebase-perf") version "2.0.2" apply false
 
   // kotlin相关
   alias(libs.plugins.kotlin.android) apply false

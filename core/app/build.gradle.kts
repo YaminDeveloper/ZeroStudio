@@ -15,7 +15,6 @@ plugins {
   alias(libs.plugins.google.services)
   alias(libs.plugins.firebase.crashlytics)
   id("org.jetbrains.kotlin.plugin.compose")
-  // id("com.google.firebase.firebase-perf")
 }
 
 apply { plugin(AndroidIDEAssetsPlugin::class.java) }
@@ -113,20 +112,7 @@ kapt { arguments { arg("eventBusIndex", "${BuildConfig.packageName}.events.AppEv
 
 configurations.all {
   // resolutionStrategy {
-  // force(libs.hamcrest.all)
-  // force(libs.tests.junit)
-  // force(libs.common.lsp4j.jsonrpc)
-  // force(libs.common.org.eclipse.lsp4j)
-
-  // force(libs.org.jetbrains.kotlin.stdlib)
-  // force(libs.org.jetbrains.kotlin.compiler)
-  // force(libs.org.jetbrains.kotlin.kotlin.scripting.jvm.host)
-  // force(libs.org.jetbrains.kotlin.ktscompiler)
-  // force(libs.org.jetbrains.kotlin.sam.with.receiver.compiler.plugin)
-  // force(libs.org.jetbrains.kotlin.reflect)
   // force(libs.org.jetbrains.kotlin.jvm)
-
-  // force(libs.google.protobuf)
   // }
 
   exclude(group = "com.google.googlejavaformat", module = "google-java-format")
@@ -152,14 +138,6 @@ dependencies {
   implementation(libs.common.utilcode)
   implementation(libs.common.glide)
   implementation(libs.common.jsoup)
-  debugImplementation(libs.common.matrix.android.lib)
-  debugImplementation(libs.common.matrix.android.commons)
-  debugImplementation(libs.common.matrix.trace.canary)
-  debugImplementation(libs.common.matrix.resource.canary)
-  debugImplementation(libs.common.matrix.io.canary)
-  debugImplementation(libs.common.matrix.sqlite.lint)
-  debugImplementation(libs.common.matrix.battery.canary)
-  debugImplementation(libs.common.matrix.traffic)
   implementation(libs.common.kotlin.coroutines.android)
   implementation(libs.common.retrofit)
   implementation(libs.common.retrofit.gson)
@@ -174,10 +152,6 @@ dependencies {
   implementation(libs.google.auto.service.annotations)
   implementation(libs.google.gson)
   implementation(libs.google.guava)
-  // implementation(platform("com.google.firebase:firebase-bom:34.10.0"))
-  // // Add the dependency for the Performance Monitoring library
-  // // When using the BoM, you don't specify versions in Firebase library dependencies
-  // implementation("com.google.firebase:firebase-perf")
 
   // AndroidX
   implementation(libs.androidx.splashscreen)

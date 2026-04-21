@@ -28,7 +28,7 @@ import com.itsaky.androidide.fragments.SearchResultFragment;
 import com.itsaky.androidide.fragments.output.AppLogFragment;
 import com.itsaky.androidide.fragments.output.BuildOutputFragment;
 import com.itsaky.androidide.fragments.output.IDELogFragment;
-import com.itsaky.androidide.app.MatrixApmPanelFragment;
+// import com.itsaky.androidide.app.MatrixApmPanelFragment;
 import com.itsaky.androidide.BuildConfig;
 import android.zero.studio.terminal.TermuxFragment;
 import com.itsaky.androidide.resources.R;
@@ -75,10 +75,10 @@ public class EditorBottomSheetTabAdapter extends FragmentStateAdapter {
     this.fragments.add(new Tab(fragmentActivity.getString(R.string.title_regular_preview), 
        com.itsaky.androidide.repository.dependencies.analyzer.ui.DependencyUpdateFragment.class, ++index));
        
-    if (BuildConfig.DEBUG) {
-      this.fragments.add(new Tab(fragmentActivity.getString(R.string.view_apm_panel), 
-         MatrixApmPanelFragment.class, ++index));
-    }
+    // if (BuildConfig.DEBUG) {
+      // this.fragments.add(new Tab(fragmentActivity.getString(R.string.view_apm_panel), 
+         // MatrixApmPanelFragment.class, ++index));
+    // }
 
     //诊断
      this.fragments.add(new Tab(fragmentActivity.getString(R.string.view_diags),
