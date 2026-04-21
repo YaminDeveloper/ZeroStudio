@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.net.URL
 import java.util.zip.ZipInputStream
 
 class ComposeClasspathManager(private val context: Context) {
@@ -365,12 +366,12 @@ class ComposeClasspathManager(private val context: Context) {
                     .redirectErrorStream(true)
                     .start()
 
-                val outputDeferred = async {
-                    BufferedReader(InputStreamReader(process.inputStream)).use { it.readText() }
-                }
-
-                val completed = process.waitFor(D8_TIMEOUT_MINUTES, TimeUnit.MINUTES)
-                val output = outputDeferred.await()
+                val completed =
+                    process.waitFor(
+                        D8_TIMEOUT_MINUTES * 60,
+                        java.util.concurrent.TimeUnit.SECONDS,
+                    )
+                val output = process.inputStream.bufferedReader().use { it.readText() }
 
                 if (!completed) {
                     process.destroyForcibly()
