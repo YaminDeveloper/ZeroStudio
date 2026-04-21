@@ -529,6 +529,11 @@ abstract class ProjectHandlerActivity : BaseEditorActivity() {
     manager.cachedInitResult = result
     editorActivityScope.launch(Dispatchers.IO) {
       try {
+        // 尽早异步启动 Kotlin LSP（不要等待 workspace/gradle model 全量初始化完成）
+        withContext(Dispatchers.Main) {
+          com.itsaky.androidide.lsp.kotlin.KotlinLspIntegration.setup(this@ProjectHandlerActivity)
+        }
+
         manager.setupProject()
         val workspace = manager.getWorkspace()
 
@@ -541,10 +546,6 @@ abstract class ProjectHandlerActivity : BaseEditorActivity() {
             postProjectInit(false, null)
           }
           return@launch
-        }
-        
-        withContext(Dispatchers.Main) {
-            com.itsaky.androidide.lsp.kotlin.KotlinLspIntegration.setup(this@ProjectHandlerActivity)
         }
         
         manager.notifyProjectUpdate()
