@@ -78,6 +78,7 @@ class IDEApplication : TermuxApplication() {
 
   @OptIn(DelicateCoroutinesApi::class)
   override fun onCreate() {
+    val bootStart = System.currentTimeMillis()
     instance = this
     super.onCreate()
 
@@ -126,6 +127,13 @@ class IDEApplication : TermuxApplication() {
     }
 
     Environment.init(this)
+    MatrixApmTracker.init(this)
+    MatrixApmInitializer.init(this)
+    MatrixApmTracker.reportModuleEvent(
+        module = "app",
+        event = "startup",
+        costMs = System.currentTimeMillis() - bootStart,
+    )
   }
 
   /**

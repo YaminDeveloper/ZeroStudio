@@ -49,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.itsaky.androidide.fragments.BaseFragment
+import com.itsaky.androidide.app.MatrixApmTracker
 import com.itsaky.androidide.projects.IProjectManager
 import com.itsaky.androidide.repository.dependencies.analyzer.ProjectAnalyzer
 import com.itsaky.androidide.repository.dependencies.analyzer.impl.GradleProjectAnalyzerImpl
@@ -107,6 +108,7 @@ fun DependencyUpdateScreen(
   val scope = rememberCoroutineScope()
 
   fun refresh() {
+    val scanStart = System.currentTimeMillis()
     scope.launch {
       isLoading = true
       errorMessage = null
@@ -155,6 +157,12 @@ fun DependencyUpdateScreen(
         errorMessage = e.message ?: "Unknown error while loading dependencies."
         onFlashError("Dependency scan failed: ${errorMessage}")
       } finally {
+        MatrixApmTracker.reportModuleEvent(
+            module = "dependency-scan",
+            event = if (errorMessage == null) "refresh_ok" else "refresh_error",
+            costMs = System.currentTimeMillis() - scanStart,
+            extra = "count=${reports.size}"
+        )
         isLoading = false
       }
     }
