@@ -65,6 +65,7 @@ import java.lang.ref.WeakReference
 import java.util.Objects
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.Collections
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +106,7 @@ class GradleBuildService :
   private val serviceJob = SupervisorJob()
   private val buildServiceScope =
       CoroutineScope(serviceJob + Dispatchers.Default + CoroutineName("GradleBuildService"))
+  private val pendingBuildRequests = Collections.synchronizedSet(mutableSetOf<CompletableFuture<*>>())
 
   private val isGradleWrapperAvailable: Boolean
     get() {
@@ -227,12 +229,18 @@ class GradleBuildService :
     outputReaderJob?.cancel()
     outputReaderJob = null
 
+    synchronized(pendingBuildRequests) {
+      pendingBuildRequests.forEach { it.cancel(true) }
+      pendingBuildRequests.clear()
+    }
+
     // Ensure the build process is terminated immediately upon Service destruction to prevent leaks
     currentBuildProcess?.destroy()
     currentBuildProcess = null
     serviceJob.cancel()
 
     isToolingServerStarted = false
+    super.onDestroy()
   }
 
   override fun onBind(intent: Intent): IBinder? {
@@ -725,9 +733,14 @@ class GradleBuildService :
 
   private fun <T> performBuildTasks(future: CompletableFuture<T>): CompletableFuture<T> {
     val serviceRef = WeakReference(this)
-    return CompletableFuture.runAsync { onPrepareBuildRequest() }
+    val taskFuture = CompletableFuture.runAsync { onPrepareBuildRequest() }
         .thenCompose { future }
-        .whenComplete { _, _ -> serviceRef.get()?.isBuildInProgress = false }
+        .whenComplete { _, _ ->
+          serviceRef.get()?.isBuildInProgress = false
+        }
+    pendingBuildRequests.add(taskFuture)
+    taskFuture.whenComplete { _, _ -> pendingBuildRequests.remove(taskFuture) }
+    return taskFuture
   }
 
   private fun onPrepareBuildRequest() {

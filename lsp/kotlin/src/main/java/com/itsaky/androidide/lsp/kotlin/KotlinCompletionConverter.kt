@@ -69,7 +69,8 @@ class KotlinCompletionConverter {
         }
 
         // 如果用户输入了至少 1 个字符，向本地 Java/Android 类库请求跨层补全
-        val classpathItems = if (prefix.length >= 1 && javaCompilerBridge != null) {
+        val shouldQueryClasspath = prefix.length >= 1 && prefix.firstOrNull()?.isUpperCase() == true
+        val classpathItems = if (shouldQueryClasspath && javaCompilerBridge != null) {
             getClasspathCompletions(prefix, fileContent)
         } else emptyList()
 
@@ -122,7 +123,7 @@ class KotlinCompletionConverter {
         val detail = item.detail ?: ""
         
         // LSP4J 中，优先取 textEdit 中的文本，其次取 insertText，最后降级取 label
-        var insertText = item.textEdit?.left?.newText ?: item.insertText ?: label
+        var insertText = extractInsertText(item, label)
         val sortText = item.sortText
         
         val isSnippet = item.insertTextFormat == Lsp4jInsertTextFormat.Snippet
@@ -187,6 +188,17 @@ class KotlinCompletionConverter {
         }
     }
 
+    private fun extractInsertText(item: Lsp4jCompletionItem, fallbackLabel: String): String {
+        val textEdit = item.textEdit
+        val fromTextEdit =
+            when {
+                textEdit == null -> null
+                textEdit.isLeft -> textEdit.left?.newText
+                else -> textEdit.right?.newText
+            }
+        return fromTextEdit ?: item.insertText ?: fallbackLabel
+    }
+
     /** 提取由 LSP4J 给出的 additionalTextEdits 里的 import 语句 */
     private fun extractImportFromAdditionalEdits(edits: List<Lsp4jTextEdit>?): String? {
         if (edits.isNullOrEmpty()) return null
@@ -210,6 +222,7 @@ class KotlinCompletionConverter {
             Lsp4jCompletionItemKind.Module -> IdeCompletionItemKind.MODULE
             Lsp4jCompletionItemKind.Property -> IdeCompletionItemKind.PROPERTY
             Lsp4jCompletionItemKind.Value -> IdeCompletionItemKind.VALUE
+            Lsp4jCompletionItemKind.Constant -> IdeCompletionItemKind.VALUE
             Lsp4jCompletionItemKind.Enum -> IdeCompletionItemKind.ENUM
             Lsp4jCompletionItemKind.Keyword -> IdeCompletionItemKind.KEYWORD
             Lsp4jCompletionItemKind.Snippet -> IdeCompletionItemKind.SNIPPET

@@ -193,28 +193,27 @@ abstract class ProjectHandlerActivity : BaseEditorActivity() {
     super.preDestroy()
 
     if (isDestroying) {
-
       try {
         stopLanguageServers()
       } catch (err: Exception) {
         log.error("Failed to stop editor services.")
       }
+    }
 
-      try {
-        unbindService(buildServiceConnection)
-        buildServiceConnection.onConnected = {}
-      } catch (err: Throwable) {
-        log.error("Unable to unbind service")
-      } finally {
-        Lookup.getDefault().apply {
-          (lookup(BuildService.KEY_BUILD_SERVICE) as? GradleBuildService?)?.setEventListener(null)
+    try {
+      unbindService(buildServiceConnection)
+    } catch (err: Throwable) {
+      log.error("Unable to unbind service")
+    } finally {
+      buildServiceConnection.onConnected = null
+      Lookup.getDefault().apply {
+        (lookup(BuildService.KEY_BUILD_SERVICE) as? GradleBuildService?)?.setEventListener(null)
 
-          unregister(BuildService.KEY_BUILD_SERVICE)
-        }
-
-        mBuildEventListener.release()
-        editorViewModel.isBoundToBuildSerice = false
+        unregister(BuildService.KEY_BUILD_SERVICE)
       }
+
+      mBuildEventListener.release()
+      editorViewModel.isBoundToBuildSerice = false
     }
   }
 
