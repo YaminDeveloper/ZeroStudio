@@ -354,10 +354,10 @@ class KotlinLanguageServerImpl(
                 val prefix = extractPrefix(contentStr, params.position)
                 
                 val enhancedItems = completionConverter.convertWithClasspathEnhancement(items, contentStr, prefix)
-                
-                enhancedItems.forEach {
-                    it.completionKind = it.completionKind ?: CompletionItemKind.NONE
-                    it.matchLevel = MatchLevel.PARTIAL_MATCH
+
+                enhancedItems.forEach { item ->
+                    item.completionKind = item.completionKind ?: CompletionItemKind.NONE
+                    applyCompletionRanking(item, prefix)
                 }
 
                 CompletionResult(enhancedItems)
@@ -378,6 +378,54 @@ class KotlinLanguageServerImpl(
             start--
         }
         return line.substring(start, col)
+    }
+
+    private fun applyCompletionRanking(
+        item: com.itsaky.androidide.lsp.models.CompletionItem,
+        prefix: String
+    ) {
+        if (prefix.isBlank()) {
+            item.matchLevel = MatchLevel.PARTIAL_MATCH
+            return
+        }
+
+        val normalizedPrefix = prefix.lowercase()
+        val label = item.ideLabel
+        val detail = item.detail
+        val lowerLabel = label.lowercase()
+        val lowerDetail = detail.lowercase()
+
+        val labelMatch = com.itsaky.androidide.lsp.models.CompletionItem.matchLevel(label, prefix)
+        val detailMatch = com.itsaky.androidide.lsp.models.CompletionItem.matchLevel(detail, prefix)
+        item.matchLevel = if (labelMatch != MatchLevel.NO_MATCH) labelMatch else detailMatch
+
+        val labelStarts = lowerLabel.startsWith(normalizedPrefix)
+        val labelContains = !labelStarts && lowerLabel.contains(normalizedPrefix)
+        val detailStarts = !labelStarts && lowerDetail.startsWith(normalizedPrefix)
+        val detailContains = !labelStarts && !detailStarts && lowerDetail.contains(normalizedPrefix)
+
+        val kindPenalty =
+            when (item.completionKind) {
+                CompletionItemKind.METHOD,
+                CompletionItemKind.FUNCTION,
+                CompletionItemKind.PROPERTY,
+                CompletionItemKind.FIELD,
+                CompletionItemKind.VARIABLE -> 0
+                CompletionItemKind.CLASS, CompletionItemKind.INTERFACE, CompletionItemKind.ENUM -> 2
+                else -> 1
+            }
+
+        val matchBucket =
+            when {
+                labelStarts -> 0
+                labelContains -> 1
+                detailStarts -> 2
+                detailContains -> 3
+                else -> 4
+            }
+
+        val existingSort = item.ideSortText ?: item.ideLabel
+        item.ideSortText = "%d%d_%s".format(matchBucket, kindPenalty, existingSort)
     }
 
     override suspend fun findDefinition(params: DefinitionParams): DefinitionResult = withContext(Dispatchers.IO) {

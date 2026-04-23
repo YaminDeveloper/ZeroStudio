@@ -69,7 +69,8 @@ class KotlinCompletionConverter {
         }
 
         // 如果用户输入了至少 1 个字符，向本地 Java/Android 类库请求跨层补全
-        val classpathItems = if (prefix.length >= 1 && javaCompilerBridge != null) {
+        val shouldQueryClasspath = prefix.length >= 1 && prefix.firstOrNull()?.isUpperCase() == true
+        val classpathItems = if (shouldQueryClasspath && javaCompilerBridge != null) {
             getClasspathCompletions(prefix, fileContent)
         } else emptyList()
 
