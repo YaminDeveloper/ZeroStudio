@@ -51,4 +51,14 @@
     <string name="theme_arctic_ice">Arctic Ice</string>
     <string name="theme_carbon_red">Carbon Red</string>
     <string name="theme_mtglacial_blue">MTGlacial Blue</string>
+    <string name="theme_monet_rose">Monet Rose</string>
+    <string name="theme_monet_peach">Monet Peach</string>
+    <string name="theme_monet_amber">Monet Amber</string>
+    <string name="theme_monet_lime">Monet Lime</string>
+    <string name="theme_monet_sage">Monet Sage</string>
+    <string name="theme_monet_teal">Monet Teal</string>
+    <string name="theme_monet_sky">Monet Sky</string>
+    <string name="theme_monet_indigo">Monet Indigo</string>
+    <string name="theme_monet_plum">Monet Plum</string>
+    <string name="theme_monet_fuchsia">Monet Fuchsia</string>
 </resources>

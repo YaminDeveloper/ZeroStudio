@@ -232,6 +232,76 @@ enum class IDETheme(
       R.string.theme_carbon_red,
   ),
 
+  /** Monet Rose theme. */
+  MONET_ROSE(
+      R.style.Theme_AndroidIDE_MonetRose,
+      R.style.Theme_AndroidIDE_MonetRose_Dark,
+      R.string.theme_monet_rose,
+  ),
+
+  /** Monet Peach theme. */
+  MONET_PEACH(
+      R.style.Theme_AndroidIDE_MonetPeach,
+      R.style.Theme_AndroidIDE_MonetPeach_Dark,
+      R.string.theme_monet_peach,
+  ),
+
+  /** Monet Amber theme. */
+  MONET_AMBER(
+      R.style.Theme_AndroidIDE_MonetAmber,
+      R.style.Theme_AndroidIDE_MonetAmber_Dark,
+      R.string.theme_monet_amber,
+  ),
+
+  /** Monet Lime theme. */
+  MONET_LIME(
+      R.style.Theme_AndroidIDE_MonetLime,
+      R.style.Theme_AndroidIDE_MonetLime_Dark,
+      R.string.theme_monet_lime,
+  ),
+
+  /** Monet Sage theme. */
+  MONET_SAGE(
+      R.style.Theme_AndroidIDE_MonetSage,
+      R.style.Theme_AndroidIDE_MonetSage_Dark,
+      R.string.theme_monet_sage,
+  ),
+
+  /** Monet Teal theme. */
+  MONET_TEAL(
+      R.style.Theme_AndroidIDE_MonetTeal,
+      R.style.Theme_AndroidIDE_MonetTeal_Dark,
+      R.string.theme_monet_teal,
+  ),
+
+  /** Monet Sky theme. */
+  MONET_SKY(
+      R.style.Theme_AndroidIDE_MonetSky,
+      R.style.Theme_AndroidIDE_MonetSky_Dark,
+      R.string.theme_monet_sky,
+  ),
+
+  /** Monet Indigo theme. */
+  MONET_INDIGO(
+      R.style.Theme_AndroidIDE_MonetIndigo,
+      R.style.Theme_AndroidIDE_MonetIndigo_Dark,
+      R.string.theme_monet_indigo,
+  ),
+
+  /** Monet Plum theme. */
+  MONET_PLUM(
+      R.style.Theme_AndroidIDE_MonetPlum,
+      R.style.Theme_AndroidIDE_MonetPlum_Dark,
+      R.string.theme_monet_plum,
+  ),
+
+  /** Monet Fuchsia theme. */
+  MONET_FUCHSIA(
+      R.style.Theme_AndroidIDE_MonetFuchsia,
+      R.style.Theme_AndroidIDE_MonetFuchsia_Dark,
+      R.string.theme_monet_fuchsia,
+  ),
+
   /** MTGlacialBlue Theme */
   MTGLACIAlBLUE(
       R.style.Theme_AndroidIDE_MTGlacialBlue,

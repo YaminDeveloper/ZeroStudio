@@ -20,7 +20,7 @@ package com.itsaky.androidide.app
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
 import com.google.android.material.R.attr
 import com.itsaky.androidide.eventbus.events.preferences.PreferenceChangeEvent
@@ -65,11 +65,19 @@ abstract class BaseIDEActivity : AppCompatActivity() {
         navigationBarColor = this@BaseIDEActivity.navigationBarColor
         statusBarColor = this@BaseIDEActivity.statusBarColor
       }
+      applySystemBarIconAppearance()
     }
     IThemeManager.getInstance().applyTheme(this)
     super.onCreate(savedInstanceState)
     preSetContentLayout()
     setContentView(bindLayout())
+  }
+
+  override fun onResume() {
+    super.onResume()
+    if (enableSystemBarTheming) {
+      applySystemBarIconAppearance()
+    }
   }
 
   override fun onDestroy() {
@@ -96,14 +104,23 @@ abstract class BaseIDEActivity : AppCompatActivity() {
   open fun onBasePreferenceChanged(event: PreferenceChangeEvent) {
     when (event.key) {
       KEY_UI_MODE -> {
-        val mode = event.value as? Int ?: AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-        AppCompatDelegate.setDefaultNightMode(mode)
-        recreateActivitySafe()
+        // UI mode changes are handled centrally in IDEApplication via AppCompatDelegate.
+        // Avoid triggering a second recreation here because it can race with popup attach/update
+        // and cause "PopupDecorView not attached to window manager" on some devices.
       }
       KEY_SELECTED_THEME -> {
         recreateActivitySafe()
       }
     }
+  }
+
+  private fun applySystemBarIconAppearance() {
+    val controller = WindowInsetsControllerCompat(window, window.decorView)
+    val isNightMode =
+        resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+    controller.isAppearanceLightStatusBars = !isNightMode
+    controller.isAppearanceLightNavigationBars = !isNightMode
   }
 
   /** Recreates the activity with state preservation. */
