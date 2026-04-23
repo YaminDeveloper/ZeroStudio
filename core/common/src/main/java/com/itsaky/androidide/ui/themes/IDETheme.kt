@@ -296,7 +296,7 @@ enum class IDETheme(
   ),
 
   /** Monet Fuchsia theme. */
-  MONET_FUCHSIA(
+  (
       R.style.Theme_AndroidIDE_MonetFuchsia,
       R.style.Theme_AndroidIDE_MonetFuchsia_Dark,
       R.string.theme_monet_fuchsia,
@@ -317,7 +317,7 @@ enum class IDETheme(
 
   companion object {
     /** The default theme. */
-    val DEFAULT = MINTY_FRESH
+    val DEFAULT = MONET_FUCHSIA
 
     // Cache names map for O(1) lookup to avoid Enum.valueOf exceptions
     private val map: Map<String, IDETheme> by lazy { entries.associateBy { it.name } }
