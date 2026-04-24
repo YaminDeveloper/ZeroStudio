@@ -27,6 +27,7 @@ import com.itsaky.androidide.fragments.DiagnosticsListFragment;
 import com.itsaky.androidide.fragments.SearchResultFragment;
 import com.itsaky.androidide.fragments.output.AppLogFragment;
 import com.itsaky.androidide.fragments.output.BuildOutputFragment;
+import com.itsaky.androidide.fragments.output.EditorProcessApmFragment;
 import com.itsaky.androidide.fragments.output.IDELogFragment;
 // import com.itsaky.androidide.app.MatrixApmPanelFragment;
 import com.itsaky.androidide.BuildConfig;
@@ -60,26 +61,17 @@ public class EditorBottomSheetTabAdapter extends FragmentStateAdapter {
         // IDE log
     this.fragments.add(new Tab(fragmentActivity.getString(R.string.ide_logs), 
         IDELogFragment.class, ++index));
-     
-     //git版本控制
-    // this.fragments.add(new Tab(fragmentActivity.getString(R.string.title_git), 
-       // GitHostFragment.class, ++index));
-       
+
+    this.fragments.add(new Tab(fragmentActivity.getString(R.string.view_apm_panel), 
+        EditorProcessApmFragment.class, ++index));
+        
        //正则表达式可视化调试与预览
     this.fragments.add(new Tab(fragmentActivity.getString(R.string.title_regular_preview), 
        RegexPreviewFragment.class, ++index));
        
-    // this.fragments.add(new Tab(fragmentActivity.getString(R.string.title_regular_preview), 
-       // com.itsaky.androidide.lsp.editor.LspEditorFragment.class, ++index));
-       
     this.fragments.add(new Tab(fragmentActivity.getString(R.string.title_regular_preview), 
        com.itsaky.androidide.repository.dependencies.analyzer.ui.DependencyUpdateFragment.class, ++index));
        
-    // if (BuildConfig.DEBUG) {
-      // this.fragments.add(new Tab(fragmentActivity.getString(R.string.view_apm_panel), 
-         // MatrixApmPanelFragment.class, ++index));
-    // }
-
     //诊断
      this.fragments.add(new Tab(fragmentActivity.getString(R.string.view_diags),
          DiagnosticsListFragment.class,++index));
