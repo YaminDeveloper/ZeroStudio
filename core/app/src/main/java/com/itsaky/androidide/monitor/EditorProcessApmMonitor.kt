@@ -180,11 +180,15 @@ class EditorProcessApmMonitor(
         ticks++
 
         val hotClassStats =
-            classActivityTracker.sample(
-                cpuDeltaMs = cpuDeltaMs,
-                memDeltaMb = attributedMemDeltaMb,
-                fullScan = (ticks % 8 == 0),
-            )
+            if (ticks % 3 == 0 || ticks % 10 == 0) {
+              classActivityTracker.sample(
+                  cpuDeltaMs = cpuDeltaMs,
+                  memDeltaMb = attributedMemDeltaMb,
+                  fullScan = (ticks % 10 == 0),
+              )
+            } else {
+              classActivityTracker.cachedTop()
+            }
         if (ticks % 5 == 0) {
           termuxSubsystemStats = readTermuxSubsystemStats()
         }
@@ -616,9 +620,15 @@ class EditorProcessApmMonitor(
     private val stats = LinkedHashMap<String, MutableHotClassStat>()
     private val lastHitSnapshot = mutableMapOf<String, Double>()
     private var sampleSeq = 0L
+    private var lastSampleRealtimeMs = 0L
 
     fun sample(cpuDeltaMs: Double, memDeltaMb: Double, fullScan: Boolean): List<EditorHotClassStat> {
       sampleSeq++
+      val now = SystemClock.elapsedRealtime()
+      if (!fullScan && (now - lastSampleRealtimeMs) < 1400L) {
+        return cachedTop()
+      }
+      lastSampleRealtimeMs = now
       if (cpuDeltaMs <= 0.1 && memDeltaMb <= 0.05) {
         return cachedTop()
       }
@@ -629,6 +639,7 @@ class EditorProcessApmMonitor(
 
       val totalHits = classHits.values.sum().takeIf { it > 0.0 } ?: 1.0
       classHits.forEach { (className, hits) ->
+        if (shouldIgnoreClass(className)) return@forEach
         val ratio = hits / totalHits
         val previousWeight = lastHitSnapshot[className] ?: 0.0
         val smoothRatio = (ratio * 0.7) + (previousWeight * 0.3)
@@ -669,6 +680,7 @@ class EditorProcessApmMonitor(
     fun cachedTop(): List<EditorHotClassStat> {
       return stats.values
           .filter { sampleSeq - it.lastSeenSeq <= 45L }
+          .filterNot { shouldIgnoreClass(it.className) }
           .sortedByDescending { (it.totalCpuMs * 0.75) + (it.hitWeightEma * 100.0) }
           .take(MAX_HOT_CLASSES)
           .map { it.toSnapshot() }
@@ -681,12 +693,14 @@ class EditorProcessApmMonitor(
     private fun collectAppClassHitsWeighted(fullScan: Boolean): Map<String, Double> {
       val hits = mutableMapOf<String, Double>()
       val maxFrames = if (fullScan) 12 else 6
-      Thread.getAllStackTraces().values.forEach { stack ->
+      val samplerThreadId = Thread.currentThread().id
+      Thread.getAllStackTraces().forEach { (thread, stack) ->
+        if (thread.id == samplerThreadId) return@forEach
         var threadContribution = 0.0
         val visitedInThread = hashSetOf<String>()
         stack.take(maxFrames).forEachIndexed { index, frame ->
           if (!frame.className.startsWith(appPackageName)) return@forEachIndexed
-          if (ignoredClassPrefixes.any { frame.className.startsWith(it) }) return@forEachIndexed
+          if (shouldIgnoreClass(frame.className)) return@forEachIndexed
           if (!visitedInThread.add(frame.className)) return@forEachIndexed
           val depthWeight = 1.0 / (index + 1).toDouble()
           val effectiveWeight = depthWeight * (1.0 - threadContribution).coerceAtLeast(0.15)
@@ -695,6 +709,13 @@ class EditorProcessApmMonitor(
         }
       }
       return hits
+    }
+
+    private fun shouldIgnoreClass(className: String): Boolean {
+      if (ignoredClassPrefixes.any { className.startsWith(it) }) return true
+      if (className.contains("EditorProcessApmMonitor\$stream")) return true
+      if (className.contains("ClassActivityTracker")) return true
+      return false
     }
 
     private fun trimTrackedClasses() {
