@@ -47,10 +47,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import com.itsaky.androidide.activities.editor.ProjectHandlerActivity
+import com.itsaky.androidide.lookup.Lookup
+import com.itsaky.androidide.lsp.IDELanguageClientImpl
 import com.itsaky.androidide.monitor.EditorHotClassStat
 import com.itsaky.androidide.monitor.EditorProcessApmMonitor
 import com.itsaky.androidide.monitor.EditorProcessApmSnapshot
 import com.itsaky.androidide.monitor.EditorSubsystemStat
+import com.itsaky.androidide.projects.builder.BuildService
 import com.itsaky.androidide.utils.executioncommand.TermuxCommand
 import java.util.Locale
 import kotlinx.coroutines.Job
@@ -72,6 +76,7 @@ class EditorProcessApmFragment : Fragment() {
         EditorApmMonitorScreen(
             snapshot = snapshotState.value,
             onCleanProcesses = ::runCleanupViaTermux,
+            onInAppSelfCleanup = ::runInAppSelfCleanup,
         )
       }
     }
@@ -108,12 +113,24 @@ class EditorProcessApmFragment : Fragment() {
       }
     }
   }
+
+  private fun runInAppSelfCleanup() {
+    viewLifecycleOwner.lifecycleScope.launch {
+      (activity as? ProjectHandlerActivity)?.stopLanguageServers()
+      IDELanguageClientImpl.shutdown()
+      (Lookup.getDefault().lookup(BuildService.KEY_BUILD_SERVICE) as? BuildService)
+          ?.cleanupIdleResources("apm-menu-self-clean")
+      Runtime.getRuntime().gc()
+      System.gc()
+    }
+  }
 }
 
 @Composable
 private fun EditorApmMonitorScreen(
     snapshot: EditorProcessApmSnapshot?,
     onCleanProcesses: () -> Unit,
+    onInAppSelfCleanup: () -> Unit,
 ) {
   val cpuHistory = remember { mutableStateListOf<Float>() }
   val pssHistory = remember { mutableStateListOf<Float>() }
@@ -142,6 +159,13 @@ private fun EditorApmMonitorScreen(
                     onClick = {
                       menuExpanded = false
                       onCleanProcesses()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("应用内自清理(页面/LSP/Tooling)") },
+                    onClick = {
+                      menuExpanded = false
+                      onInAppSelfCleanup()
                     },
                 )
               }
