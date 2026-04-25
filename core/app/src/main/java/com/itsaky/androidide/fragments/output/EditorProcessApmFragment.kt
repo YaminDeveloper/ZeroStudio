@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,13 +29,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import com.itsaky.androidide.monitor.EditorHotClassStat
 import com.itsaky.androidide.monitor.EditorProcessApmMonitor
 import com.itsaky.androidide.monitor.EditorProcessApmSnapshot
 import java.util.Locale
@@ -77,11 +82,13 @@ private fun EditorApmMonitorScreen(snapshot: EditorProcessApmSnapshot?) {
   val cpuHistory = remember { mutableStateListOf<Float>() }
   val pssHistory = remember { mutableStateListOf<Float>() }
 
-  snapshot?.let {
-    cpuHistory.add(it.cpuUsagePercent.toFloat())
-    pssHistory.add(it.processPssMb.toFloat())
-    if (cpuHistory.size > 60) cpuHistory.removeAt(0)
-    if (pssHistory.size > 60) pssHistory.removeAt(0)
+  LaunchedEffect(snapshot?.timestampMs) {
+    snapshot?.let {
+      cpuHistory.add(it.cpuUsagePercent.toFloat())
+      pssHistory.add(it.processPssMb.toFloat())
+      if (cpuHistory.size > MAX_HISTORY_POINTS) cpuHistory.removeAt(0)
+      if (pssHistory.size > MAX_HISTORY_POINTS) pssHistory.removeAt(0)
+    }
   }
 
   Scaffold { contentPadding ->
@@ -120,6 +127,9 @@ private fun EditorApmMonitorScreen(snapshot: EditorProcessApmSnapshot?) {
         )
       }
       item {
+        AdvancedOverviewCard(snapshot = snapshot)
+      }
+      item {
         MetricGrid(
             listOf(
                 "RSS" to format(snapshot?.processRssMb, "MB"),
@@ -145,6 +155,32 @@ private fun EditorApmMonitorScreen(snapshot: EditorProcessApmSnapshot?) {
           }
         }
       }
+      item {
+        HotClassActivityCard(classStats = snapshot?.hotClassStats.orEmpty())
+      }
+    }
+  }
+}
+
+@Composable
+private fun AdvancedOverviewCard(snapshot: EditorProcessApmSnapshot?) {
+  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Text("高级监控能力", fontWeight = FontWeight.SemiBold)
+      Text("CPU/APM: 进程CPU、热点类活动估算")
+      Text("内存: RSS/PSS/Java/Native + 热点类内存增量估算")
+      Text("GC: 次数与耗时")
+      val pressureLevel = when {
+        (snapshot?.cpuUsagePercent ?: 0.0) >= 80.0 -> "高"
+        (snapshot?.cpuUsagePercent ?: 0.0) >= 40.0 -> "中"
+        else -> "低"
+      }
+      Text("性能压力等级: $pressureLevel")
+      Text(
+          "说明: 热点类数据基于线程栈采样 + 增量分摊估算，用于定位可疑高消耗模块，不是精确 profiler 结果。",
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          fontSize = 12.sp,
+      )
     }
   }
 }
@@ -190,29 +226,87 @@ private fun MetricChartCard(
 
 @Composable
 private fun Sparkline(values: List<Float>, lineColor: Color) {
-  Canvas(modifier = Modifier.fillMaxWidth().height(120.dp)) {
-    if (values.size < 2) return@Canvas
-    val maxValue = values.maxOrNull()?.takeIf { it > 0f } ?: 1f
-    val minValue = values.minOrNull() ?: 0f
-    val range = (maxValue - minValue).takeIf { it > 0f } ?: 1f
-
-    val stepX = size.width / (values.size - 1)
-    val path = Path()
-
-    values.forEachIndexed { index, value ->
-      val normalized = (value - minValue) / range
-      val x = stepX * index
-      val y = size.height - (normalized * size.height)
-      if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+  Column(modifier = Modifier.fillMaxWidth()) {
+    val min = values.minOrNull() ?: 0f
+    val max = values.maxOrNull() ?: 0f
+    val current = values.lastOrNull() ?: 0f
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+      Text("Min ${formatFloat(min)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text("Now ${formatFloat(current)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text("Max ${formatFloat(max)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
+    Spacer(modifier = Modifier.height(6.dp))
+    Box(modifier = Modifier.fillMaxWidth().height(140.dp)) {
+      Canvas(modifier = Modifier.fillMaxSize()) {
+        if (values.size < 2) return@Canvas
+        val maxValue = values.maxOrNull()?.takeIf { it > 0f } ?: 1f
+        val minValue = values.minOrNull() ?: 0f
+        val range = (maxValue - minValue).takeIf { it > 0f } ?: 1f
 
-    drawLine(
-        color = Color.Gray.copy(alpha = 0.4f),
-        start = Offset(0f, size.height),
-        end = Offset(size.width, size.height),
-        strokeWidth = 1.dp.toPx(),
-    )
-    drawPath(path = path, color = lineColor, style = Stroke(width = 2.dp.toPx()))
+        val stepX = size.width / (values.size - 1)
+        val linePath = Path()
+        val fillPath = Path()
+
+        values.forEachIndexed { index, value ->
+          val normalized = (value - minValue) / range
+          val x = stepX * index
+          val y = size.height - (normalized * size.height)
+          if (index == 0) {
+            linePath.moveTo(x, y)
+            fillPath.moveTo(x, size.height)
+            fillPath.lineTo(x, y)
+          } else {
+            linePath.lineTo(x, y)
+            fillPath.lineTo(x, y)
+          }
+        }
+        fillPath.lineTo(size.width, size.height)
+        fillPath.close()
+
+        val gridStep = size.height / 4f
+        repeat(5) { idx ->
+          val y = idx * gridStep
+          drawLine(
+              color = Color.Gray.copy(alpha = 0.22f),
+              start = Offset(0f, y),
+              end = Offset(size.width, y),
+              strokeWidth = 1.dp.toPx(),
+          )
+        }
+
+        drawPath(path = fillPath, color = lineColor.copy(alpha = 0.14f), style = Fill)
+        drawPath(path = linePath, color = lineColor, style = Stroke(width = 2.dp.toPx()))
+      }
+    }
+  }
+}
+
+@Composable
+private fun HotClassActivityCard(classStats: List<EditorHotClassStat>) {
+  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text("热点类活动追踪（Top 15）", fontWeight = FontWeight.SemiBold)
+      if (classStats.isEmpty()) {
+        Text("暂无数据，等待采样…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return@Column
+      }
+
+      classStats.take(15).forEach { stat ->
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(stat.className, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+          Text(
+              "calls=${stat.calls} totalCPU=${formatFloat(stat.totalCpuMs)} ms avgCPU=${formatFloat(stat.avgCpuMs)} ms",
+              fontSize = 12.sp,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+          Text(
+              "totalMem=${formatFloat(stat.totalMemMb)} MB avgMem=${formatFloat(stat.avgMemMb)} MB peakA=${formatFloat(stat.peakMemMb)} MB",
+              fontSize = 12.sp,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      }
+    }
   }
 }
 
@@ -220,3 +314,9 @@ private fun format(value: Double?, suffix: String): String {
   if (value == null) return "--"
   return String.format(Locale.US, "%.2f %s", value, suffix)
 }
+
+private fun formatFloat(value: Double): String = String.format(Locale.US, "%.2f", value)
+
+private fun formatFloat(value: Float): String = String.format(Locale.US, "%.2f", value)
+
+private const val MAX_HISTORY_POINTS = 180

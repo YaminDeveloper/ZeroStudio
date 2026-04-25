@@ -41,6 +41,17 @@ data class EditorProcessApmSnapshot(
     val appUptimeMs: Long,
     val dexClassStat: EditorDexClassStat,
     val classArtifactStat: EditorClassArtifactStat,
+    val hotClassStats: List<EditorHotClassStat>,
+)
+
+data class EditorHotClassStat(
+    val className: String,
+    val calls: Int,
+    val totalCpuMs: Double,
+    val avgCpuMs: Double,
+    val totalMemMb: Double,
+    val avgMemMb: Double,
+    val peakMemMb: Double,
 )
 
 /** Non-intrusive process-level APM monitor for editor bottom sheet dashboard. */
@@ -51,26 +62,37 @@ class EditorProcessApmMonitor(
 
   fun stream(intervalMs: Long = 1000L): Flow<EditorProcessApmSnapshot> = flow {
     var previous = readCpuStat()
+    var previousProcessCpuMs = Process.getElapsedCpuTime()
+    var previousPssMb = readProcessPssMb()
     val dexStat = readDexClassStat()
     var classArtifactStat = scanClassArtifacts()
+    val classActivityTracker = ClassActivityTracker(appContext.packageName)
     var ticks = 0
 
     while (true) {
       val current = readCpuStat()
       val cpuUsage = calcCpuUsage(previous, current)
       previous = current
+      val processPssMb = readProcessPssMb()
+      val processCpuMs = Process.getElapsedCpuTime()
+      val cpuDeltaMs = max(0L, processCpuMs - previousProcessCpuMs).toDouble()
+      val pssDeltaMb = (processPssMb - previousPssMb).coerceAtLeast(0.0)
+      previousProcessCpuMs = processCpuMs
+      previousPssMb = processPssMb
 
       if (ticks % 15 == 0) {
         classArtifactStat = scanClassArtifacts()
       }
       ticks++
 
+      val hotClassStats = classActivityTracker.sample(cpuDeltaMs = cpuDeltaMs, memDeltaMb = pssDeltaMb)
+
       emit(
           EditorProcessApmSnapshot(
               timestampMs = System.currentTimeMillis(),
               cpuUsagePercent = cpuUsage,
               processRssMb = readProcessRssMb(),
-              processPssMb = readProcessPssMb(),
+              processPssMb = processPssMb,
               javaHeapUsedMb = readJavaHeapUsedMb(),
               javaHeapMaxMb = readJavaHeapMaxMb(),
               nativeHeapMb = readNativeHeapMb(),
@@ -81,6 +103,7 @@ class EditorProcessApmMonitor(
               appUptimeMs = SystemClock.elapsedRealtime(),
               dexClassStat = dexStat,
               classArtifactStat = classArtifactStat,
+              hotClassStats = hotClassStats,
           )
       )
       delay(intervalMs)
@@ -193,4 +216,79 @@ class EditorProcessApmMonitor(
       val processTicks: Long,
       val systemTicks: Long,
   )
+
+  private class ClassActivityTracker(private val appPackageName: String) {
+    private val stats = LinkedHashMap<String, MutableHotClassStat>()
+
+    fun sample(cpuDeltaMs: Double, memDeltaMb: Double): List<EditorHotClassStat> {
+      val classHits = collectAppClassHits()
+      if (classHits.isEmpty()) {
+        return stats.values
+            .sortedByDescending { it.totalCpuMs }
+            .take(MAX_HOT_CLASSES)
+            .map { it.toSnapshot() }
+      }
+
+      val totalHits = classHits.values.sum().coerceAtLeast(1)
+      classHits.forEach { (className, hits) ->
+        val ratio = hits.toDouble() / totalHits.toDouble()
+        val cpuShare = cpuDeltaMs * ratio
+        val memShare = memDeltaMb * ratio
+        val item =
+            stats.getOrPut(className) {
+              MutableHotClassStat(
+                  className = className,
+                  calls = 0,
+                  totalCpuMs = 0.0,
+                  totalMemMb = 0.0,
+                  peakMemMb = 0.0,
+              )
+            }
+        item.calls += hits
+        item.totalCpuMs += cpuShare
+        item.totalMemMb += memShare
+        item.peakMemMb = max(item.peakMemMb, memShare)
+      }
+
+      return stats.values
+          .sortedByDescending { it.totalCpuMs }
+          .take(MAX_HOT_CLASSES)
+          .map { it.toSnapshot() }
+    }
+
+    private fun collectAppClassHits(): Map<String, Int> {
+      val hits = mutableMapOf<String, Int>()
+      Thread.getAllStackTraces().values.forEach { stack ->
+        val frame = stack.firstOrNull { it.className.startsWith(appPackageName) } ?: return@forEach
+        hits[frame.className] = (hits[frame.className] ?: 0) + 1
+      }
+      return hits
+    }
+  }
+
+  private data class MutableHotClassStat(
+      val className: String,
+      var calls: Int,
+      var totalCpuMs: Double,
+      var totalMemMb: Double,
+      var peakMemMb: Double,
+  ) {
+    fun toSnapshot(): EditorHotClassStat {
+      val avgCpuMs = if (calls > 0) totalCpuMs / calls.toDouble() else 0.0
+      val avgMemMb = if (calls > 0) totalMemMb / calls.toDouble() else 0.0
+      return EditorHotClassStat(
+          className = className,
+          calls = calls,
+          totalCpuMs = totalCpuMs,
+          avgCpuMs = avgCpuMs,
+          totalMemMb = totalMemMb,
+          avgMemMb = avgMemMb,
+          peakMemMb = peakMemMb,
+      )
+    }
+  }
+
+  private companion object {
+    private const val MAX_HOT_CLASSES = 30
+  }
 }
