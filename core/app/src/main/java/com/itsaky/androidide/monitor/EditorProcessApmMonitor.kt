@@ -74,6 +74,8 @@ class EditorProcessApmMonitor(
     var previous = readCpuStat()
     var previousProcessCpuMs = Process.getElapsedCpuTime()
     var previousPssMb = readProcessPssMb()
+    var previousJavaHeapUsedMb = readJavaHeapUsedMb()
+    var previousNativeHeapMb = readNativeHeapMb()
     val dexStat = readDexClassStat()
     var classArtifactStat = scanClassArtifacts()
     val classActivityTracker = ClassActivityTracker(appContext.packageName)
@@ -85,22 +87,29 @@ class EditorProcessApmMonitor(
       val cpuUsage = calcCpuUsage(previous, current)
       previous = current
       val processPssMb = readProcessPssMb()
+      val javaHeapUsedMb = readJavaHeapUsedMb()
+      val nativeHeapMb = readNativeHeapMb()
       val processCpuMs = Process.getElapsedCpuTime()
       val cpuDeltaMs = max(0L, processCpuMs - previousProcessCpuMs).toDouble()
       val pssDeltaMb = (processPssMb - previousPssMb).coerceAtLeast(0.0)
+      val javaHeapDeltaMb = (javaHeapUsedMb - previousJavaHeapUsedMb).coerceAtLeast(0.0)
+      val nativeHeapDeltaMb = (nativeHeapMb - previousNativeHeapMb).coerceAtLeast(0.0)
+      val attributedMemDeltaMb = max(pssDeltaMb, max(javaHeapDeltaMb, nativeHeapDeltaMb))
       previousProcessCpuMs = processCpuMs
       previousPssMb = processPssMb
+      previousJavaHeapUsedMb = javaHeapUsedMb
+      previousNativeHeapMb = nativeHeapMb
 
       if (ticks % 15 == 0) {
         classArtifactStat = scanClassArtifacts()
       }
       ticks++
 
-      val hotClassStats = classActivityTracker.sample(cpuDeltaMs = cpuDeltaMs, memDeltaMb = pssDeltaMb)
+      val hotClassStats =
+          classActivityTracker.sample(cpuDeltaMs = cpuDeltaMs, memDeltaMb = attributedMemDeltaMb)
       if (ticks % 5 == 0) {
         termuxSubsystemStats = readTermuxSubsystemStats()
       }
-      val javaHeapUsedMb = readJavaHeapUsedMb()
       val javaHeapMaxMb = readJavaHeapMaxMb()
       val gcTimeMs = readGcTimeMs()
       val alerts =
@@ -119,7 +128,7 @@ class EditorProcessApmMonitor(
               processPssMb = processPssMb,
               javaHeapUsedMb = javaHeapUsedMb,
               javaHeapMaxMb = javaHeapMaxMb,
-              nativeHeapMb = readNativeHeapMb(),
+              nativeHeapMb = nativeHeapMb,
               threadCount = Thread.getAllStackTraces().size,
               openFdCount = readOpenFdCount(),
               gcCount = readGcCount(),

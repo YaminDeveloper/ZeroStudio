@@ -411,23 +411,96 @@ private fun HotClassActivityCard(classStats: List<EditorHotClassStat>) {
       }
 
       classStats.take(15).forEach { stat ->
-        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
           Text(stat.className, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
           Text(
-              "calls=${stat.calls} totalCPU=${formatFloat(stat.totalCpuMs)} ms avgCPU=${formatFloat(stat.avgCpuMs)} ms",
+              "该类累计采样 ${stat.calls} 次，累计CPU ${formatFloat(stat.totalCpuMs)}ms，平均每次 ${formatFloat(stat.avgCpuMs)}ms。",
               fontSize = 12.sp,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
-          Text(
-              "totalMem=${formatFloat(stat.totalMemMb)} MB avgMem=${formatFloat(stat.avgMemMb)} MB peakA=${formatFloat(stat.peakMemMb)} MB",
-              fontSize = 12.sp,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MetricPill(
+                label = "调用",
+                value = stat.calls.toString(),
+                color = callsSeverityColor(stat.calls),
+                modifier = Modifier.weight(1f),
+            )
+            MetricPill(
+                label = "总CPU",
+                value = "${formatFloat(stat.totalCpuMs)}ms",
+                color = cpuSeverityColor(stat.totalCpuMs),
+                modifier = Modifier.weight(1f),
+            )
+            MetricPill(
+                label = "均CPU",
+                value = "${formatFloat(stat.avgCpuMs)}ms",
+                color = cpuLatencyColor(stat.avgCpuMs),
+                modifier = Modifier.weight(1f),
+            )
+          }
+          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            MetricPill(
+                label = "总内存",
+                value = "${formatFloat(stat.totalMemMb)}MB",
+                color = memSeverityColor(stat.totalMemMb),
+                modifier = Modifier.weight(1f),
+            )
+            MetricPill(
+                label = "均内存",
+                value = "${formatFloat(stat.avgMemMb)}MB",
+                color = memSeverityColor(stat.avgMemMb),
+                modifier = Modifier.weight(1f),
+            )
+            MetricPill(
+                label = "峰值",
+                value = "${formatFloat(stat.peakMemMb)}MB",
+                color = memSeverityColor(stat.peakMemMb),
+                modifier = Modifier.weight(1f),
+            )
+          }
         }
       }
     }
   }
 }
+
+@Composable
+private fun MetricPill(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+  Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.16f))) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+      Text(label, fontSize = 11.sp, color = color, fontWeight = FontWeight.SemiBold)
+      Text(value, fontSize = 12.sp, color = color, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+  }
+}
+
+private fun cpuLatencyColor(avgCpuMs: Double): Color =
+    when {
+      avgCpuMs < 16 -> Color(0xFF2E7D32)
+      avgCpuMs < 50 -> Color(0xFFF9A825)
+      else -> Color(0xFFC62828)
+    }
+
+private fun cpuSeverityColor(totalCpuMs: Double): Color =
+    when {
+      totalCpuMs < 500 -> Color(0xFF2E7D32)
+      totalCpuMs < 2000 -> Color(0xFFF9A825)
+      else -> Color(0xFFC62828)
+    }
+
+private fun callsSeverityColor(calls: Int): Color =
+    when {
+      calls < 10 -> Color(0xFF2E7D32)
+      calls < 50 -> Color(0xFFF9A825)
+      else -> Color(0xFFC62828)
+    }
+
+private fun memSeverityColor(memMb: Double): Color =
+    when {
+      memMb < 1.0 -> Color(0xFF2E7D32)
+      memMb < 8.0 -> Color(0xFFF9A825)
+      else -> Color(0xFFC62828)
+    }
 
 private fun format(value: Double?, suffix: String): String {
   if (value == null) return "--"
