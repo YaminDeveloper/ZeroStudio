@@ -25,6 +25,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -57,6 +58,7 @@ import com.itsaky.androidide.activities.editor.ProjectHandlerActivity
 import com.itsaky.androidide.lookup.Lookup
 import com.itsaky.androidide.lsp.IDELanguageClientImpl
 import com.itsaky.androidide.monitor.EditorHotClassStat
+import com.itsaky.androidide.monitor.EditorPssBreakdownStat
 import com.itsaky.androidide.monitor.EditorProcessApmMonitor
 import com.itsaky.androidide.monitor.EditorProcessApmSnapshot
 import com.itsaky.androidide.monitor.EditorSubsystemStat
@@ -210,6 +212,9 @@ private fun EditorApmMonitorScreen(
         )
       }
       item {
+        TemperatureStatusCard(snapshot = snapshot)
+      }
+      item {
         AdvancedOverviewCard(snapshot = snapshot)
       }
       item {
@@ -219,6 +224,8 @@ private fun EditorApmMonitorScreen(
         MetricGrid(
             listOf(
                 stringResource(ResString.string.apm_metric_rss) to format(snapshot?.processRssMb, "MB"),
+                stringResource(ResString.string.apm_metric_uss) to format(snapshot?.processUssMb, "MB"),
+                stringResource(ResString.string.apm_metric_vss) to format(snapshot?.processVssMb, "MB"),
                 stringResource(ResString.string.apm_metric_java_heap) to
                     "${format(snapshot?.javaHeapUsedMb, "MB")} / ${format(snapshot?.javaHeapMaxMb, "MB")}",
                 stringResource(ResString.string.apm_metric_native_heap) to format(snapshot?.nativeHeapMb, "MB"),
@@ -242,11 +249,52 @@ private fun EditorApmMonitorScreen(
         }
       }
       item {
+        PssBreakdownCard(stats = snapshot?.pssBreakdownStats.orEmpty())
+      }
+      item {
+        RuntimeSignalsCard(snapshot = snapshot)
+      }
+      item {
+        AdvancedHookCapabilityCard(snapshot = snapshot)
+      }
+      item {
         HotClassActivityCard(classStats = snapshot?.hotClassStats.orEmpty())
       }
       item {
         TermuxSubsystemCard(stats = snapshot?.termuxSubsystemStats.orEmpty())
       }
+    }
+  }
+}
+
+@Composable
+private fun TemperatureStatusCard(snapshot: EditorProcessApmSnapshot?) {
+  val temp = snapshot?.deviceThermalStat?.batteryTempCelsius
+  val level = snapshot?.deviceThermalStat?.level ?: "unknown"
+  val (textColor, label) =
+      when (level) {
+        "danger" -> Color(0xFFC62828) to stringResource(ResString.string.apm_temp_state_danger)
+        "warning" -> Color(0xFFF9A825) to stringResource(ResString.string.apm_temp_state_warning)
+        "safe" -> Color(0xFF2E7D32) to stringResource(ResString.string.apm_temp_state_safe)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant to stringResource(ResString.string.apm_temp_state_unknown)
+      }
+
+  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Text(stringResource(ResString.string.apm_temp_title), fontWeight = FontWeight.SemiBold)
+      Text(
+          stringResource(
+              ResString.string.apm_temp_value,
+              temp?.let { formatFloat(it) } ?: "--",
+          ),
+          fontSize = 20.sp,
+          fontWeight = FontWeight.Bold,
+          color = textColor,
+      )
+      Text(
+          stringResource(ResString.string.apm_temp_state, label),
+          color = textColor,
+      )
     }
   }
 }
@@ -485,6 +533,120 @@ private fun HotClassActivityCard(classStats: List<EditorHotClassStat>) {
         }
       }
     }
+  }
+}
+
+@Composable
+private fun PssBreakdownCard(stats: List<EditorPssBreakdownStat>) {
+  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(stringResource(ResString.string.apm_pss_breakdown_title), fontWeight = FontWeight.SemiBold)
+      if (stats.isEmpty()) {
+        Text(stringResource(ResString.string.apm_waiting_data), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return@Column
+      }
+      stats.forEach { stat ->
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+          Text(stat.category, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Text("${formatFloat(stat.pssMb)} MB", fontWeight = FontWeight.Medium)
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun RuntimeSignalsCard(snapshot: EditorProcessApmSnapshot?) {
+  val threadMax = snapshot?.topThreadStats?.maxOfOrNull { it.cpuDeltaTicks }?.coerceAtLeast(1L) ?: 1L
+  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(stringResource(ResString.string.apm_runtime_signals_title), fontWeight = FontWeight.SemiBold)
+      SignalProgressRow(
+          label = stringResource(ResString.string.apm_runtime_cpu_user),
+          value = "${snapshot?.cpuBreakdownStat?.userCpuMs ?: 0L}ms",
+          progress = ((snapshot?.cpuBreakdownStat?.userCpuMs ?: 0L) / 2000f).coerceIn(0f, 1f),
+          tint = Color(0xFF7E57C2),
+      )
+      SignalProgressRow(
+          label = stringResource(ResString.string.apm_runtime_cpu_system),
+          value = "${snapshot?.cpuBreakdownStat?.systemCpuMs ?: 0L}ms",
+          progress = ((snapshot?.cpuBreakdownStat?.systemCpuMs ?: 0L) / 2000f).coerceIn(0f, 1f),
+          tint = Color(0xFF5C6BC0),
+      )
+      SignalProgressRow(
+          label = stringResource(ResString.string.apm_runtime_io_read),
+          value = "${snapshot?.ioStat?.readBytes ?: 0L}B",
+          progress = (((snapshot?.ioStat?.readBytes ?: 0L).toFloat()) / (1024f * 1024f)).coerceIn(0f, 1f),
+          tint = Color(0xFF00897B),
+      )
+      SignalProgressRow(
+          label = stringResource(ResString.string.apm_runtime_io_write),
+          value = "${snapshot?.ioStat?.writeBytes ?: 0L}B",
+          progress = (((snapshot?.ioStat?.writeBytes ?: 0L).toFloat()) / (1024f * 1024f)).coerceIn(0f, 1f),
+          tint = Color(0xFFF57C00),
+      )
+      SignalProgressRow(
+          label = stringResource(ResString.string.apm_runtime_jank_ratio),
+          value = "${formatFloat(snapshot?.frameJankStat?.frameDropPercent ?: 0.0)}%",
+          progress = (((snapshot?.frameJankStat?.frameDropPercent ?: 0.0) / 100.0).toFloat()).coerceIn(0f, 1f),
+          tint = Color(0xFFC62828),
+      )
+      if (snapshot?.topThreadStats?.isNotEmpty() == true) {
+        Text(stringResource(ResString.string.apm_runtime_top_threads), fontWeight = FontWeight.Medium)
+        snapshot.topThreadStats.take(5).forEach { thread ->
+          val progress = (thread.cpuDeltaTicks.toFloat() / threadMax.toFloat()).coerceIn(0f, 1f)
+          SignalProgressRow(
+              label = "T${thread.tid} ${thread.name}",
+              value = "Δ${thread.cpuDeltaTicks}",
+              progress = progress,
+              tint = Color(0xFF3949AB),
+          )
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun SignalProgressRow(
+    label: String,
+    value: String,
+    progress: Float,
+    tint: Color,
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+      Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      Text(value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = tint)
+    }
+    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth(), color = tint)
+  }
+}
+
+@Composable
+private fun AdvancedHookCapabilityCard(snapshot: EditorProcessApmSnapshot?) {
+  val stat = snapshot?.advancedHookStat
+  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text(stringResource(ResString.string.apm_hook_title), fontWeight = FontWeight.SemiBold)
+      HookStateRow("JVMTI", stat?.jvmtiReady == true)
+      HookStateRow("PLT Hook", stat?.pltHookReady == true)
+      HookStateRow("Inline Hook", stat?.inlineHookReady == true)
+      HookStateRow("malloc hook", stat?.mallocHookReady == true)
+      HookStateRow("libmemunreachable", stat?.memUnreachableReady == true)
+      stat?.notes?.take(3)?.forEach {
+        Text("• $it", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+    }
+  }
+}
+
+@Composable
+private fun HookStateRow(name: String, ready: Boolean) {
+  val tint = if (ready) Color(0xFF2E7D32) else Color(0xFFF9A825)
+  Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    Text(name, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(if (ready) stringResource(ResString.string.apm_hook_ready) else stringResource(ResString.string.apm_hook_not_ready), color = tint, fontWeight = FontWeight.Bold)
   }
 }
 
