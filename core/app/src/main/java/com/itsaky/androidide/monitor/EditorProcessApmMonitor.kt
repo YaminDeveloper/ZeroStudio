@@ -6,6 +6,7 @@ import android.os.Debug
 import android.os.Process
 import android.os.SystemClock
 import dalvik.system.DexFile
+import com.itsaky.androidide.utils.executioncommand.TermuxCommand
 import java.io.File
 import kotlin.math.max
 import kotlinx.coroutines.CoroutineDispatcher
@@ -42,6 +43,8 @@ data class EditorProcessApmSnapshot(
     val dexClassStat: EditorDexClassStat,
     val classArtifactStat: EditorClassArtifactStat,
     val hotClassStats: List<EditorHotClassStat>,
+    val termuxSubsystemStats: List<EditorSubsystemStat>,
+    val healthAlerts: List<String>,
 )
 
 data class EditorHotClassStat(
@@ -52,6 +55,13 @@ data class EditorHotClassStat(
     val totalMemMb: Double,
     val avgMemMb: Double,
     val peakMemMb: Double,
+)
+
+data class EditorSubsystemStat(
+    val name: String,
+    val processCount: Int,
+    val totalCpuPercent: Double,
+    val totalRssMb: Double,
 )
 
 /** Non-intrusive process-level APM monitor for editor bottom sheet dashboard. */
@@ -67,6 +77,7 @@ class EditorProcessApmMonitor(
     val dexStat = readDexClassStat()
     var classArtifactStat = scanClassArtifacts()
     val classActivityTracker = ClassActivityTracker(appContext.packageName)
+    var termuxSubsystemStats: List<EditorSubsystemStat> = emptyList()
     var ticks = 0
 
     while (true) {
@@ -86,6 +97,19 @@ class EditorProcessApmMonitor(
       ticks++
 
       val hotClassStats = classActivityTracker.sample(cpuDeltaMs = cpuDeltaMs, memDeltaMb = pssDeltaMb)
+      if (ticks % 5 == 0) {
+        termuxSubsystemStats = readTermuxSubsystemStats()
+      }
+      val javaHeapUsedMb = readJavaHeapUsedMb()
+      val javaHeapMaxMb = readJavaHeapMaxMb()
+      val gcTimeMs = readGcTimeMs()
+      val alerts =
+          buildHealthAlerts(
+              cpuUsagePercent = cpuUsage,
+              javaHeapUsedMb = javaHeapUsedMb,
+              javaHeapMaxMb = javaHeapMaxMb,
+              gcTimeMs = gcTimeMs,
+          )
 
       emit(
           EditorProcessApmSnapshot(
@@ -93,17 +117,19 @@ class EditorProcessApmMonitor(
               cpuUsagePercent = cpuUsage,
               processRssMb = readProcessRssMb(),
               processPssMb = processPssMb,
-              javaHeapUsedMb = readJavaHeapUsedMb(),
-              javaHeapMaxMb = readJavaHeapMaxMb(),
+              javaHeapUsedMb = javaHeapUsedMb,
+              javaHeapMaxMb = javaHeapMaxMb,
               nativeHeapMb = readNativeHeapMb(),
               threadCount = Thread.getAllStackTraces().size,
               openFdCount = readOpenFdCount(),
               gcCount = readGcCount(),
-              gcTimeMs = readGcTimeMs(),
+              gcTimeMs = gcTimeMs,
               appUptimeMs = SystemClock.elapsedRealtime(),
               dexClassStat = dexStat,
               classArtifactStat = classArtifactStat,
               hotClassStats = hotClassStats,
+              termuxSubsystemStats = termuxSubsystemStats,
+              healthAlerts = alerts,
           )
       )
       delay(intervalMs)
@@ -212,6 +238,71 @@ class EditorProcessApmMonitor(
     return (processDelta.toDouble() / systemDelta.toDouble()) * 100.0
   }
 
+  private suspend fun readTermuxSubsystemStats(): List<EditorSubsystemStat> {
+    val result =
+        TermuxCommand.run(appContext) {
+          label("APM Process Sample")
+          executable("sh")
+          args("-c", "ps -A -o PID,NAME,%CPU,RSS,ARGS")
+        }
+    if (!result.isSuccess || result.stdout.isBlank()) return emptyList()
+
+    val buckets = linkedMapOf<String, MutableSubsystemAccumulator>()
+    val keywords =
+        linkedMapOf(
+            "Termux Shell" to listOf("termux", "sh", "bash", "zsh"),
+            "Gradle" to listOf("gradle", "gradlew", "daemon"),
+            "Gradle Tooling" to listOf("tooling", "kotlin-daemon"),
+            "JVM" to listOf("java", "openjdk", "dalvikvm"),
+        )
+
+    result.stdout
+        .lineSequence()
+        .drop(1)
+        .forEach { rawLine ->
+          val line = rawLine.trim()
+          if (line.isBlank()) return@forEach
+          val parts = line.split(Regex("\\s+"), limit = 5)
+          if (parts.size < 5) return@forEach
+          val lower = parts[4].lowercase()
+          val cpu = parts[2].toDoubleOrNull() ?: 0.0
+          val rssKb = parts[3].toDoubleOrNull() ?: 0.0
+          keywords.forEach { (bucketName, matches) ->
+            if (matches.any { lower.contains(it) }) {
+              val acc = buckets.getOrPut(bucketName) { MutableSubsystemAccumulator() }
+              acc.processCount += 1
+              acc.totalCpuPercent += cpu
+              acc.totalRssMb += rssKb / 1024.0
+            }
+          }
+        }
+
+    return buckets
+        .map { (name, acc) ->
+          EditorSubsystemStat(
+              name = name,
+              processCount = acc.processCount,
+              totalCpuPercent = acc.totalCpuPercent,
+              totalRssMb = acc.totalRssMb,
+          )
+        }
+        .sortedByDescending { it.totalCpuPercent }
+  }
+
+  private fun buildHealthAlerts(
+      cpuUsagePercent: Double,
+      javaHeapUsedMb: Double,
+      javaHeapMaxMb: Double,
+      gcTimeMs: Long,
+  ): List<String> {
+    val alerts = mutableListOf<String>()
+    if (cpuUsagePercent >= 85.0) alerts += "CPU sustained high load"
+    if (javaHeapMaxMb > 0 && (javaHeapUsedMb / javaHeapMaxMb) >= 0.90) alerts += "OOM risk: Java heap above 90%"
+    if (gcTimeMs >= 200L) alerts += "GC pause elevated"
+    if (alerts.isEmpty()) alerts += "No immediate ANR/OOM signal"
+    return alerts
+  }
+
   private data class CpuStat(
       val processTicks: Long,
       val systemTicks: Long,
@@ -291,4 +382,10 @@ class EditorProcessApmMonitor(
   private companion object {
     private const val MAX_HOT_CLASSES = 30
   }
+
+  private data class MutableSubsystemAccumulator(
+      var processCount: Int = 0,
+      var totalCpuPercent: Double = 0.0,
+      var totalRssMb: Double = 0.0,
+  )
 }

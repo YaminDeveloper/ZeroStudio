@@ -15,16 +15,25 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -41,6 +50,8 @@ import androidx.lifecycle.lifecycleScope
 import com.itsaky.androidide.monitor.EditorHotClassStat
 import com.itsaky.androidide.monitor.EditorProcessApmMonitor
 import com.itsaky.androidide.monitor.EditorProcessApmSnapshot
+import com.itsaky.androidide.monitor.EditorSubsystemStat
+import com.itsaky.androidide.utils.executioncommand.TermuxCommand
 import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -57,7 +68,12 @@ class EditorProcessApmFragment : Fragment() {
       savedInstanceState: Bundle?,
   ): View {
     return ComposeView(requireContext()).apply {
-      setContent { EditorApmMonitorScreen(snapshot = snapshotState.value) }
+      setContent {
+        EditorApmMonitorScreen(
+            snapshot = snapshotState.value,
+            onCleanProcesses = ::runCleanupViaTermux,
+        )
+      }
     }
   }
 
@@ -75,12 +91,33 @@ class EditorProcessApmFragment : Fragment() {
     monitorJob?.cancel()
     super.onStop()
   }
+
+  private fun runCleanupViaTermux() {
+    viewLifecycleOwner.lifecycleScope.launch {
+      TermuxCommand.run(requireContext().applicationContext) {
+        label("APM Cleanup Gradle/JVM")
+        executable("sh")
+        args(
+            "-c",
+            "gradle --stop 2>/dev/null; " +
+                "pkill -f 'gradle.*daemon' 2>/dev/null; " +
+                "pkill -f 'java.*gradle' 2>/dev/null; " +
+                "pkill -f 'gradle' 2>/dev/null; " +
+                "echo 'Gradle and Java cleanup done.'",
+        )
+      }
+    }
+  }
 }
 
 @Composable
-private fun EditorApmMonitorScreen(snapshot: EditorProcessApmSnapshot?) {
+private fun EditorApmMonitorScreen(
+    snapshot: EditorProcessApmSnapshot?,
+    onCleanProcesses: () -> Unit,
+) {
   val cpuHistory = remember { mutableStateListOf<Float>() }
   val pssHistory = remember { mutableStateListOf<Float>() }
+  var menuExpanded by remember { mutableStateOf(false) }
 
   LaunchedEffect(snapshot?.timestampMs) {
     snapshot?.let {
@@ -91,18 +128,31 @@ private fun EditorApmMonitorScreen(snapshot: EditorProcessApmSnapshot?) {
     }
   }
 
-  Scaffold { contentPadding ->
+  Scaffold(
+      topBar = {
+        TopAppBar(
+            title = { Text("APM 实时监控") },
+            actions = {
+              IconButton(onClick = { menuExpanded = true }) {
+                Icon(Icons.Default.MoreVert, contentDescription = "更多")
+              }
+              DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                DropdownMenuItem(
+                    text = { Text("清理 Gradle/Java 进程") },
+                    onClick = {
+                      menuExpanded = false
+                      onCleanProcesses()
+                    },
+                )
+              }
+            },
+        )
+      },
+  ) { contentPadding ->
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(contentPadding).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-      item {
-        Text(
-            text = "APM 实时监控",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-        )
-      }
       item {
         Text(
             text = "采样: 1s（类文件扫描: 15s）",
@@ -128,6 +178,9 @@ private fun EditorApmMonitorScreen(snapshot: EditorProcessApmSnapshot?) {
       }
       item {
         AdvancedOverviewCard(snapshot = snapshot)
+      }
+      item {
+        HealthAlertsCard(alerts = snapshot?.healthAlerts.orEmpty())
       }
       item {
         MetricGrid(
@@ -158,6 +211,9 @@ private fun EditorApmMonitorScreen(snapshot: EditorProcessApmSnapshot?) {
       item {
         HotClassActivityCard(classStats = snapshot?.hotClassStats.orEmpty())
       }
+      item {
+        TermuxSubsystemCard(stats = snapshot?.termuxSubsystemStats.orEmpty())
+      }
     }
   }
 }
@@ -181,6 +237,18 @@ private fun AdvancedOverviewCard(snapshot: EditorProcessApmSnapshot?) {
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           fontSize = 12.sp,
       )
+    }
+  }
+}
+
+@Composable
+private fun HealthAlertsCard(alerts: List<String>) {
+  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+      Text("ANR/OOM 预警", fontWeight = FontWeight.SemiBold)
+      alerts.forEach { alert ->
+        Text("• $alert", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+      }
     }
   }
 }
@@ -276,6 +344,29 @@ private fun Sparkline(values: List<Float>, lineColor: Color) {
 
         drawPath(path = fillPath, color = lineColor.copy(alpha = 0.14f), style = Fill)
         drawPath(path = linePath, color = lineColor, style = Stroke(width = 2.dp.toPx()))
+      }
+    }
+  }
+}
+
+@Composable
+private fun TermuxSubsystemCard(stats: List<EditorSubsystemStat>) {
+  Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+      Text("Termux/Gradle/JVM 子系统监控", fontWeight = FontWeight.SemiBold)
+      if (stats.isEmpty()) {
+        Text("暂无终端子系统采样数据", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return@Column
+      }
+      stats.forEach { stat ->
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+          Text(stat.name, fontWeight = FontWeight.Medium)
+          Text(
+              "proc=${stat.processCount} totalCPU=${formatFloat(stat.totalCpuPercent)}% totalMem=${formatFloat(stat.totalRssMb)}MB",
+              fontSize = 12.sp,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
       }
     }
   }
