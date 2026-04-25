@@ -140,8 +140,6 @@ class EditorProcessApmMonitor(
             ignoredClassPrefixes =
                 setOf(
                     "com.itsaky.androidide.monitor.",
-                    "kotlinx.coroutines.",
-                    "java.util.concurrent.",
                 ),
         )
     val frameTracker = FrameJankTracker()
@@ -182,11 +180,11 @@ class EditorProcessApmMonitor(
         ticks++
 
         val hotClassStats =
-            if (ticks % 2 == 0) {
-              classActivityTracker.sample(cpuDeltaMs = cpuDeltaMs, memDeltaMb = attributedMemDeltaMb)
-            } else {
-              classActivityTracker.cachedTop()
-            }
+            classActivityTracker.sample(
+                cpuDeltaMs = cpuDeltaMs,
+                memDeltaMb = attributedMemDeltaMb,
+                fullScan = (ticks % 8 == 0),
+            )
         if (ticks % 5 == 0) {
           termuxSubsystemStats = readTermuxSubsystemStats()
         }
@@ -619,12 +617,12 @@ class EditorProcessApmMonitor(
     private val lastHitSnapshot = mutableMapOf<String, Double>()
     private var sampleSeq = 0L
 
-    fun sample(cpuDeltaMs: Double, memDeltaMb: Double): List<EditorHotClassStat> {
+    fun sample(cpuDeltaMs: Double, memDeltaMb: Double, fullScan: Boolean): List<EditorHotClassStat> {
       sampleSeq++
       if (cpuDeltaMs <= 0.1 && memDeltaMb <= 0.05) {
         return cachedTop()
       }
-      val classHits = collectAppClassHitsWeighted()
+      val classHits = collectAppClassHitsWeighted(fullScan = fullScan)
       if (classHits.isEmpty()) {
         return cachedTop()
       }
@@ -635,8 +633,9 @@ class EditorProcessApmMonitor(
         val previousWeight = lastHitSnapshot[className] ?: 0.0
         val smoothRatio = (ratio * 0.7) + (previousWeight * 0.3)
         lastHitSnapshot[className] = smoothRatio
-        val cpuShare = (cpuDeltaMs * ratio).coerceAtMost(cpuDeltaMs * 0.35)
-        val memShare = (memDeltaMb * smoothRatio).coerceAtMost(memDeltaMb * 0.40)
+        val runnerDamping = if (className.contains("ToolingServerRunner")) 0.78 else 1.0
+        val cpuShare = ((cpuDeltaMs * ratio).coerceAtMost(cpuDeltaMs * 0.35)) * runnerDamping
+        val memShare = ((memDeltaMb * smoothRatio).coerceAtMost(memDeltaMb * 0.40)) * runnerDamping
         val item =
             stats.getOrPut(className) {
               MutableHotClassStat(
@@ -654,6 +653,7 @@ class EditorProcessApmMonitor(
         item.lastSeenSeq = sampleSeq
         item.hitWeightEma = (item.hitWeightEma * 0.6) + (smoothRatio * 0.4)
       }
+      trimTrackedClasses()
 
       stats.values.forEach { item ->
         val inactive = sampleSeq - item.lastSeenSeq
@@ -675,18 +675,41 @@ class EditorProcessApmMonitor(
     }
 
     private fun collectAppClassHitsWeighted(): Map<String, Double> {
+      return collectAppClassHitsWeighted(fullScan = false)
+    }
+
+    private fun collectAppClassHitsWeighted(fullScan: Boolean): Map<String, Double> {
       val hits = mutableMapOf<String, Double>()
-      var threadBudget = 40
+      val maxFrames = if (fullScan) 12 else 6
       Thread.getAllStackTraces().values.forEach { stack ->
-        if (threadBudget-- <= 0) return@forEach
-        stack.take(4).forEachIndexed { index, frame ->
+        var threadContribution = 0.0
+        val visitedInThread = hashSetOf<String>()
+        stack.take(maxFrames).forEachIndexed { index, frame ->
           if (!frame.className.startsWith(appPackageName)) return@forEachIndexed
           if (ignoredClassPrefixes.any { frame.className.startsWith(it) }) return@forEachIndexed
+          if (!visitedInThread.add(frame.className)) return@forEachIndexed
           val depthWeight = 1.0 / (index + 1).toDouble()
-          hits[frame.className] = (hits[frame.className] ?: 0.0) + depthWeight
+          val effectiveWeight = depthWeight * (1.0 - threadContribution).coerceAtLeast(0.15)
+          hits[frame.className] = (hits[frame.className] ?: 0.0) + effectiveWeight
+          threadContribution = (threadContribution + effectiveWeight).coerceAtMost(1.0)
         }
       }
       return hits
+    }
+
+    private fun trimTrackedClasses() {
+      if (stats.size <= MAX_TRACKED_CLASSES) return
+      val survivors =
+          stats.values
+              .sortedByDescending { (it.totalCpuMs * 0.7) + (it.hitWeightEma * 120.0) + (it.lastSeenSeq * 0.05) }
+              .take(MAX_TRACKED_CLASSES)
+              .associateBy { it.className }
+      stats.keys.toList().forEach { key ->
+        if (!survivors.containsKey(key)) {
+          stats.remove(key)
+          lastHitSnapshot.remove(key)
+        }
+      }
     }
   }
 
@@ -716,6 +739,7 @@ class EditorProcessApmMonitor(
 
   private companion object {
     private const val MAX_HOT_CLASSES = 30
+    private const val MAX_TRACKED_CLASSES = 600
   }
 
   private data class MutableSubsystemAccumulator(
