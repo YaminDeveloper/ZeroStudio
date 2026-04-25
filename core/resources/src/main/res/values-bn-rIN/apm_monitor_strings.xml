@@ -15,7 +15,7 @@
     <string name="apm_metric_gc_count">GC Count</string>
     <string name="apm_metric_gc_time">GC Time</string>
     <string name="apm_metric_uptime">Uptime</string>
-    <string name="apm_class_loading_stats">Class Loading & Artifacts</string>
+    <string name="apm_class_loading_stats">Class Loading &amp; Artifacts</string>
     <string name="apm_dex_total_classes">Dex total classes: %1$d</string>
     <string name="apm_app_package_classes">App package classes: %1$d</string>
     <string name="apm_class_file_count">*.class: %1$d</string>
