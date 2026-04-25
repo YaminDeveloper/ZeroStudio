@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="apm_menu_more">更多</string>
+    <string name="apm_menu_clean_gradle_java">清理 Gradle/Java 进程</string>
+    <string name="apm_menu_self_cleanup">应用内自清理(页面/LSP/Tooling)</string>
+    <string name="apm_title">APM 实时监控</string>
+    <string name="apm_sampling_desc">采样: 1s（类文件扫描: 15s）</string>
+    <string name="apm_cpu_usage">CPU 使用率(%)</string>
+    <string name="apm_process_pss">进程 PSS(MB)</string>
+    <string name="apm_metric_rss">RSS</string>
+    <string name="apm_metric_java_heap">Java Heap</string>
+    <string name="apm_metric_native_heap">Native Heap</string>
+    <string name="apm_metric_thread_count">线程数</string>
+    <string name="apm_metric_open_fd">打开FD</string>
+    <string name="apm_metric_gc_count">GC次数</string>
+    <string name="apm_metric_gc_time">GC耗时</string>
+    <string name="apm_metric_uptime">Uptime</string>
+    <string name="apm_class_loading_stats">类加载与产物统计</string>
+    <string name="apm_dex_total_classes">Dex总类数: %1$d</string>
+    <string name="apm_app_package_classes">App包类数: %1$d</string>
+    <string name="apm_class_file_count">*.class: %1$d</string>
+    <string name="apm_clazz_file_count">*.clazz: %1$d</string>
+    <string name="apm_kt_file_count">*.kt: %1$d</string>
+    <string name="apm_advanced_capabilities">高级监控能力</string>
+    <string name="apm_cpu_apm_desc">CPU/APM: 进程CPU、热点类活动估算</string>
+    <string name="apm_memory_desc">内存: RSS/PSS/Java/Native + 热点类内存增量估算</string>
+    <string name="apm_gc_desc">GC: 次数与耗时</string>
+    <string name="apm_pressure_high">高</string>
+    <string name="apm_pressure_medium">中</string>
+    <string name="apm_pressure_low">低</string>
+    <string name="apm_pressure_level">性能压力等级: %1$s</string>
+    <string name="apm_hot_class_disclaimer">说明: 热点类数据基于线程栈采样 + 增量分摊估算，用于定位可疑高消耗模块，不是精确 profiler 结果。</string>
+    <string name="apm_alerts_title">ANR/OOM 预警</string>
+    <string name="apm_subsystem_title">Termux/Gradle/JVM 子系统监控</string>
+    <string name="apm_no_subsystem_data">暂无终端子系统采样数据</string>
+    <string name="apm_hot_class_title">热点类活动追踪（Top 15）</string>
+    <string name="apm_waiting_data">暂无数据，等待采样…</string>
+    <string name="apm_chart_min">最小 %1$s</string>
+    <string name="apm_chart_now">当前 %1$s</string>
+    <string name="apm_chart_max">最大 %1$s</string>
+</resources>

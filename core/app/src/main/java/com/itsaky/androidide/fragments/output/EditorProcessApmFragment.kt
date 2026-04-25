@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.stringResource
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.itsaky.androidide.activities.editor.ProjectHandlerActivity
@@ -56,6 +57,7 @@ import com.itsaky.androidide.monitor.EditorProcessApmSnapshot
 import com.itsaky.androidide.monitor.EditorSubsystemStat
 import com.itsaky.androidide.projects.builder.BuildService
 import com.itsaky.androidide.utils.executioncommand.TermuxCommand
+import com.itsaky.androidide.resources.R as ResString
 import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -148,21 +150,21 @@ private fun EditorApmMonitorScreen(
   Scaffold(
       topBar = {
         TopAppBar(
-            title = { Text("APM 实时监控") },
+            title = { Text(stringResource(ResString.string.apm_title)) },
             actions = {
               IconButton(onClick = { menuExpanded = true }) {
-                Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                Icon(Icons.Default.MoreVert, contentDescription = stringResource(ResString.string.apm_menu_more))
               }
               DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                 DropdownMenuItem(
-                    text = { Text("清理 Gradle/Java 进程") },
+                    text = { Text(stringResource(ResString.string.apm_menu_clean_gradle_java)) },
                     onClick = {
                       menuExpanded = false
                       onCleanProcesses()
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("应用内自清理(页面/LSP/Tooling)") },
+                    text = { Text(stringResource(ResString.string.apm_menu_self_cleanup)) },
                     onClick = {
                       menuExpanded = false
                       onInAppSelfCleanup()
@@ -179,14 +181,14 @@ private fun EditorApmMonitorScreen(
     ) {
       item {
         Text(
-            text = "采样: 1s（类文件扫描: 15s）",
+            text = stringResource(ResString.string.apm_sampling_desc),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
       item {
         MetricChartCard(
-            title = "CPU 使用率(%)",
+            title = stringResource(ResString.string.apm_cpu_usage),
             value = format(snapshot?.cpuUsagePercent, "%"),
             values = cpuHistory,
             lineColor = Color(0xFF7E57C2),
@@ -194,7 +196,7 @@ private fun EditorApmMonitorScreen(
       }
       item {
         MetricChartCard(
-            title = "进程 PSS(MB)",
+            title = stringResource(ResString.string.apm_process_pss),
             value = format(snapshot?.processPssMb, "MB"),
             values = pssHistory,
             lineColor = Color(0xFF26A69A),
@@ -209,26 +211,26 @@ private fun EditorApmMonitorScreen(
       item {
         MetricGrid(
             listOf(
-                "RSS" to format(snapshot?.processRssMb, "MB"),
-                "Java Heap" to
+                stringResource(ResString.string.apm_metric_rss) to format(snapshot?.processRssMb, "MB"),
+                stringResource(ResString.string.apm_metric_java_heap) to
                     "${format(snapshot?.javaHeapUsedMb, "MB")} / ${format(snapshot?.javaHeapMaxMb, "MB")}",
-                "Native Heap" to format(snapshot?.nativeHeapMb, "MB"),
-                "线程数" to "${snapshot?.threadCount ?: 0}",
-                "打开FD" to "${snapshot?.openFdCount ?: 0}",
-                "GC次数" to "${snapshot?.gcCount ?: 0}",
-                "GC耗时" to "${snapshot?.gcTimeMs ?: 0} ms",
-                "Uptime" to "${(snapshot?.appUptimeMs ?: 0L) / 1000}s",
+                stringResource(ResString.string.apm_metric_native_heap) to format(snapshot?.nativeHeapMb, "MB"),
+                stringResource(ResString.string.apm_metric_thread_count) to "${snapshot?.threadCount ?: 0}",
+                stringResource(ResString.string.apm_metric_open_fd) to "${snapshot?.openFdCount ?: 0}",
+                stringResource(ResString.string.apm_metric_gc_count) to "${snapshot?.gcCount ?: 0}",
+                stringResource(ResString.string.apm_metric_gc_time) to "${snapshot?.gcTimeMs ?: 0} ms",
+                stringResource(ResString.string.apm_metric_uptime) to "${(snapshot?.appUptimeMs ?: 0L) / 1000}s",
             ))
       }
       item {
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
           Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("类加载与产物统计", fontWeight = FontWeight.SemiBold)
-            Text("Dex总类数: ${snapshot?.dexClassStat?.totalClassCount ?: 0}")
-            Text("App包类数: ${snapshot?.dexClassStat?.appPackageClassCount ?: 0}")
-            Text("*.class: ${snapshot?.classArtifactStat?.classFileCount ?: 0}")
-            Text("*.clazz: ${snapshot?.classArtifactStat?.clazzFileCount ?: 0}")
-            Text("*.kt: ${snapshot?.classArtifactStat?.kotlinFileCount ?: 0}")
+            Text(stringResource(ResString.string.apm_class_loading_stats), fontWeight = FontWeight.SemiBold)
+            Text(stringResource(ResString.string.apm_dex_total_classes, snapshot?.dexClassStat?.totalClassCount ?: 0))
+            Text(stringResource(ResString.string.apm_app_package_classes, snapshot?.dexClassStat?.appPackageClassCount ?: 0))
+            Text(stringResource(ResString.string.apm_class_file_count, snapshot?.classArtifactStat?.classFileCount ?: 0))
+            Text(stringResource(ResString.string.apm_clazz_file_count, snapshot?.classArtifactStat?.clazzFileCount ?: 0))
+            Text(stringResource(ResString.string.apm_kt_file_count, snapshot?.classArtifactStat?.kotlinFileCount ?: 0))
           }
         }
       }
@@ -246,18 +248,18 @@ private fun EditorApmMonitorScreen(
 private fun AdvancedOverviewCard(snapshot: EditorProcessApmSnapshot?) {
   Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-      Text("高级监控能力", fontWeight = FontWeight.SemiBold)
-      Text("CPU/APM: 进程CPU、热点类活动估算")
-      Text("内存: RSS/PSS/Java/Native + 热点类内存增量估算")
-      Text("GC: 次数与耗时")
+      Text(stringResource(ResString.string.apm_advanced_capabilities), fontWeight = FontWeight.SemiBold)
+      Text(stringResource(ResString.string.apm_cpu_apm_desc))
+      Text(stringResource(ResString.string.apm_memory_desc))
+      Text(stringResource(ResString.string.apm_gc_desc))
       val pressureLevel = when {
-        (snapshot?.cpuUsagePercent ?: 0.0) >= 80.0 -> "高"
-        (snapshot?.cpuUsagePercent ?: 0.0) >= 40.0 -> "中"
-        else -> "低"
+        (snapshot?.cpuUsagePercent ?: 0.0) >= 80.0 -> stringResource(ResString.string.apm_pressure_high)
+        (snapshot?.cpuUsagePercent ?: 0.0) >= 40.0 -> stringResource(ResString.string.apm_pressure_medium)
+        else -> stringResource(ResString.string.apm_pressure_low)
       }
-      Text("性能压力等级: $pressureLevel")
+      Text(stringResource(ResString.string.apm_pressure_level, pressureLevel))
       Text(
-          "说明: 热点类数据基于线程栈采样 + 增量分摊估算，用于定位可疑高消耗模块，不是精确 profiler 结果。",
+          stringResource(ResString.string.apm_hot_class_disclaimer),
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           fontSize = 12.sp,
       )
@@ -269,7 +271,7 @@ private fun AdvancedOverviewCard(snapshot: EditorProcessApmSnapshot?) {
 private fun HealthAlertsCard(alerts: List<String>) {
   Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-      Text("ANR/OOM 预警", fontWeight = FontWeight.SemiBold)
+      Text(stringResource(ResString.string.apm_alerts_title), fontWeight = FontWeight.SemiBold)
       alerts.forEach { alert ->
         Text("• $alert", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
       }
@@ -323,9 +325,9 @@ private fun Sparkline(values: List<Float>, lineColor: Color) {
     val max = values.maxOrNull() ?: 0f
     val current = values.lastOrNull() ?: 0f
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-      Text("Min ${formatFloat(min)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-      Text("Now ${formatFloat(current)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-      Text("Max ${formatFloat(max)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(stringResource(ResString.string.apm_chart_min, formatFloat(min)), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(stringResource(ResString.string.apm_chart_now, formatFloat(current)), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      Text(stringResource(ResString.string.apm_chart_max, formatFloat(max)), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     Spacer(modifier = Modifier.height(6.dp))
     Box(modifier = Modifier.fillMaxWidth().height(140.dp)) {
@@ -377,9 +379,9 @@ private fun Sparkline(values: List<Float>, lineColor: Color) {
 private fun TermuxSubsystemCard(stats: List<EditorSubsystemStat>) {
   Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-      Text("Termux/Gradle/JVM 子系统监控", fontWeight = FontWeight.SemiBold)
+      Text(stringResource(ResString.string.apm_subsystem_title), fontWeight = FontWeight.SemiBold)
       if (stats.isEmpty()) {
-        Text("暂无终端子系统采样数据", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(ResString.string.apm_no_subsystem_data), color = MaterialTheme.colorScheme.onSurfaceVariant)
         return@Column
       }
       stats.forEach { stat ->
@@ -400,9 +402,9 @@ private fun TermuxSubsystemCard(stats: List<EditorSubsystemStat>) {
 private fun HotClassActivityCard(classStats: List<EditorHotClassStat>) {
   Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
     Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-      Text("热点类活动追踪（Top 15）", fontWeight = FontWeight.SemiBold)
+      Text(stringResource(ResString.string.apm_hot_class_title), fontWeight = FontWeight.SemiBold)
       if (classStats.isEmpty()) {
-        Text("暂无数据，等待采样…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(ResString.string.apm_waiting_data), color = MaterialTheme.colorScheme.onSurfaceVariant)
         return@Column
       }
 
