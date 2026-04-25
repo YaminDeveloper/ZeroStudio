@@ -134,7 +134,16 @@ class EditorProcessApmMonitor(
     var previousNativeHeapMb = readNativeHeapMb()
     val dexStat = readDexClassStat()
     var classArtifactStat = scanClassArtifacts()
-    val classActivityTracker = ClassActivityTracker(appContext.packageName)
+    val classActivityTracker =
+        ClassActivityTracker(
+            appPackageName = appContext.packageName,
+            ignoredClassPrefixes =
+                setOf(
+                    "com.itsaky.androidide.monitor.",
+                    "kotlinx.coroutines.",
+                    "java.util.concurrent.",
+                ),
+        )
     val frameTracker = FrameJankTracker()
     frameTracker.start()
     var termuxSubsystemStats: List<EditorSubsystemStat> = emptyList()
@@ -173,7 +182,11 @@ class EditorProcessApmMonitor(
         ticks++
 
         val hotClassStats =
-            classActivityTracker.sample(cpuDeltaMs = cpuDeltaMs, memDeltaMb = attributedMemDeltaMb)
+            if (ticks % 2 == 0) {
+              classActivityTracker.sample(cpuDeltaMs = cpuDeltaMs, memDeltaMb = attributedMemDeltaMb)
+            } else {
+              classActivityTracker.cachedTop()
+            }
         if (ticks % 5 == 0) {
           termuxSubsystemStats = readTermuxSubsystemStats()
         }
@@ -184,9 +197,15 @@ class EditorProcessApmMonitor(
         val ioDeltaWrite = (ioStat.writeBytes - previousIoStat.writeBytes).coerceAtLeast(0L)
         previousIoStat = ioStat
 
-        val threadCpuStat = readThreadCpuTicks()
-        val topThreadStats = topThreadCpuDeltas(previousThreadCpuStat, threadCpuStat)
-        previousThreadCpuStat = threadCpuStat
+        val topThreadStats =
+            if (ticks % 3 == 0) {
+              val threadCpuStat = readThreadCpuTicks()
+              val sampled = topThreadCpuDeltas(previousThreadCpuStat, threadCpuStat)
+              previousThreadCpuStat = threadCpuStat
+              sampled
+            } else {
+              emptyList()
+            }
 
         val thermalStat = readBatteryThermalStat()
         val advancedHookStat = readAdvancedHookStat()
@@ -213,7 +232,7 @@ class EditorProcessApmMonitor(
                 javaHeapUsedMb = javaHeapUsedMb,
                 javaHeapMaxMb = javaHeapMaxMb,
                 nativeHeapMb = nativeHeapMb,
-                threadCount = Thread.getAllStackTraces().size,
+                threadCount = readThreadCount(),
                 openFdCount = readOpenFdCount(),
                 gcCount = readGcCount(),
                 gcTimeMs = gcTimeMs,
@@ -495,6 +514,8 @@ class EditorProcessApmMonitor(
     return result
   }
 
+  private fun readThreadCount(): Int = File("/proc/self/task").list()?.size ?: 0
+
   private fun topThreadCpuDeltas(
       previous: Map<Int, ThreadCpuTick>,
       current: Map<Int, ThreadCpuTick>,
@@ -590,19 +611,22 @@ class EditorProcessApmMonitor(
       val systemTicks: Long,
   )
 
-  private class ClassActivityTracker(private val appPackageName: String) {
+  private class ClassActivityTracker(
+      private val appPackageName: String,
+      private val ignoredClassPrefixes: Set<String>,
+  ) {
     private val stats = LinkedHashMap<String, MutableHotClassStat>()
     private val lastHitSnapshot = mutableMapOf<String, Double>()
     private var sampleSeq = 0L
 
     fun sample(cpuDeltaMs: Double, memDeltaMb: Double): List<EditorHotClassStat> {
       sampleSeq++
+      if (cpuDeltaMs <= 0.1 && memDeltaMb <= 0.05) {
+        return cachedTop()
+      }
       val classHits = collectAppClassHitsWeighted()
       if (classHits.isEmpty()) {
-        return stats.values
-            .sortedByDescending { it.totalCpuMs }
-            .take(MAX_HOT_CLASSES)
-            .map { it.toSnapshot() }
+        return cachedTop()
       }
 
       val totalHits = classHits.values.sum().takeIf { it > 0.0 } ?: 1.0
@@ -611,8 +635,8 @@ class EditorProcessApmMonitor(
         val previousWeight = lastHitSnapshot[className] ?: 0.0
         val smoothRatio = (ratio * 0.7) + (previousWeight * 0.3)
         lastHitSnapshot[className] = smoothRatio
-        val cpuShare = cpuDeltaMs * ratio
-        val memShare = memDeltaMb * smoothRatio
+        val cpuShare = (cpuDeltaMs * ratio).coerceAtMost(cpuDeltaMs * 0.35)
+        val memShare = (memDeltaMb * smoothRatio).coerceAtMost(memDeltaMb * 0.40)
         val item =
             stats.getOrPut(className) {
               MutableHotClassStat(
@@ -628,20 +652,36 @@ class EditorProcessApmMonitor(
         item.totalMemMb += memShare
         item.peakMemMb = max(item.peakMemMb, memShare)
         item.lastSeenSeq = sampleSeq
+        item.hitWeightEma = (item.hitWeightEma * 0.6) + (smoothRatio * 0.4)
       }
 
+      stats.values.forEach { item ->
+        val inactive = sampleSeq - item.lastSeenSeq
+        if (inactive > 10) {
+          item.totalCpuMs *= 0.92
+          item.totalMemMb *= 0.90
+        }
+      }
+
+      return cachedTop()
+    }
+
+    fun cachedTop(): List<EditorHotClassStat> {
       return stats.values
           .filter { sampleSeq - it.lastSeenSeq <= 45L }
-          .sortedByDescending { it.totalCpuMs }
+          .sortedByDescending { (it.totalCpuMs * 0.75) + (it.hitWeightEma * 100.0) }
           .take(MAX_HOT_CLASSES)
           .map { it.toSnapshot() }
     }
 
     private fun collectAppClassHitsWeighted(): Map<String, Double> {
       val hits = mutableMapOf<String, Double>()
+      var threadBudget = 40
       Thread.getAllStackTraces().values.forEach { stack ->
-        stack.take(6).forEachIndexed { index, frame ->
+        if (threadBudget-- <= 0) return@forEach
+        stack.take(4).forEachIndexed { index, frame ->
           if (!frame.className.startsWith(appPackageName)) return@forEachIndexed
+          if (ignoredClassPrefixes.any { frame.className.startsWith(it) }) return@forEachIndexed
           val depthWeight = 1.0 / (index + 1).toDouble()
           hits[frame.className] = (hits[frame.className] ?: 0.0) + depthWeight
         }
@@ -657,6 +697,7 @@ class EditorProcessApmMonitor(
       var totalMemMb: Double,
       var peakMemMb: Double,
       var lastSeenSeq: Long = 0L,
+      var hitWeightEma: Double = 0.0,
   ) {
     fun toSnapshot(): EditorHotClassStat {
       val avgCpuMs = if (calls > 0) totalCpuMs / calls.toDouble() else 0.0
