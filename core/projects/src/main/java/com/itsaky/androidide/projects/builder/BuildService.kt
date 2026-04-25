@@ -77,4 +77,12 @@ interface BuildService {
 
   /** Cancel any running build. */
   fun cancelCurrentBuild(): CompletableFuture<BuildCancellationRequestResult>
+
+  /**
+   * Cleanup idle runtime resources used by build/tooling pipelines.
+   *
+   * Implementations may stop Gradle daemons, terminate stale build processes and release tooling
+   * server memory when safe to do so.
+   */
+  fun cleanupIdleResources(trigger: String = "manual"): CompletableFuture<Boolean>
 }

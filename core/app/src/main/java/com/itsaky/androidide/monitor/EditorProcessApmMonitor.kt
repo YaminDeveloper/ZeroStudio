@@ -4,7 +4,9 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Debug
 import android.os.Process
+import android.os.SystemClock
 import dalvik.system.DexFile
+import com.itsaky.androidide.utils.executioncommand.TermuxCommand
 import java.io.File
 import kotlin.math.max
 import kotlinx.coroutines.CoroutineDispatcher
@@ -40,6 +42,26 @@ data class EditorProcessApmSnapshot(
     val appUptimeMs: Long,
     val dexClassStat: EditorDexClassStat,
     val classArtifactStat: EditorClassArtifactStat,
+    val hotClassStats: List<EditorHotClassStat>,
+    val termuxSubsystemStats: List<EditorSubsystemStat>,
+    val healthAlerts: List<String>,
+)
+
+data class EditorHotClassStat(
+    val className: String,
+    val calls: Int,
+    val totalCpuMs: Double,
+    val avgCpuMs: Double,
+    val totalMemMb: Double,
+    val avgMemMb: Double,
+    val peakMemMb: Double,
+)
+
+data class EditorSubsystemStat(
+    val name: String,
+    val processCount: Int,
+    val totalCpuPercent: Double,
+    val totalRssMb: Double,
 )
 
 /** Non-intrusive process-level APM monitor for editor bottom sheet dashboard. */
@@ -50,36 +72,73 @@ class EditorProcessApmMonitor(
 
   fun stream(intervalMs: Long = 1000L): Flow<EditorProcessApmSnapshot> = flow {
     var previous = readCpuStat()
+    var previousProcessCpuMs = Process.getElapsedCpuTime()
+    var previousPssMb = readProcessPssMb()
+    var previousJavaHeapUsedMb = readJavaHeapUsedMb()
+    var previousNativeHeapMb = readNativeHeapMb()
     val dexStat = readDexClassStat()
     var classArtifactStat = scanClassArtifacts()
+    val classActivityTracker = ClassActivityTracker(appContext.packageName)
+    var termuxSubsystemStats: List<EditorSubsystemStat> = emptyList()
     var ticks = 0
 
     while (true) {
       val current = readCpuStat()
       val cpuUsage = calcCpuUsage(previous, current)
       previous = current
+      val processPssMb = readProcessPssMb()
+      val javaHeapUsedMb = readJavaHeapUsedMb()
+      val nativeHeapMb = readNativeHeapMb()
+      val processCpuMs = Process.getElapsedCpuTime()
+      val cpuDeltaMs = max(0L, processCpuMs - previousProcessCpuMs).toDouble()
+      val pssDeltaMb = (processPssMb - previousPssMb).coerceAtLeast(0.0)
+      val javaHeapDeltaMb = (javaHeapUsedMb - previousJavaHeapUsedMb).coerceAtLeast(0.0)
+      val nativeHeapDeltaMb = (nativeHeapMb - previousNativeHeapMb).coerceAtLeast(0.0)
+      val attributedMemDeltaMb = max(pssDeltaMb, max(javaHeapDeltaMb, nativeHeapDeltaMb))
+      previousProcessCpuMs = processCpuMs
+      previousPssMb = processPssMb
+      previousJavaHeapUsedMb = javaHeapUsedMb
+      previousNativeHeapMb = nativeHeapMb
 
       if (ticks % 15 == 0) {
         classArtifactStat = scanClassArtifacts()
       }
       ticks++
 
+      val hotClassStats =
+          classActivityTracker.sample(cpuDeltaMs = cpuDeltaMs, memDeltaMb = attributedMemDeltaMb)
+      if (ticks % 5 == 0) {
+        termuxSubsystemStats = readTermuxSubsystemStats()
+      }
+      val javaHeapMaxMb = readJavaHeapMaxMb()
+      val gcTimeMs = readGcTimeMs()
+      val alerts =
+          buildHealthAlerts(
+              cpuUsagePercent = cpuUsage,
+              javaHeapUsedMb = javaHeapUsedMb,
+              javaHeapMaxMb = javaHeapMaxMb,
+              gcTimeMs = gcTimeMs,
+          )
+
       emit(
           EditorProcessApmSnapshot(
               timestampMs = System.currentTimeMillis(),
               cpuUsagePercent = cpuUsage,
               processRssMb = readProcessRssMb(),
-              processPssMb = readProcessPssMb(),
-              javaHeapUsedMb = readJavaHeapUsedMb(),
-              javaHeapMaxMb = readJavaHeapMaxMb(),
-              nativeHeapMb = readNativeHeapMb(),
+              processPssMb = processPssMb,
+              javaHeapUsedMb = javaHeapUsedMb,
+              javaHeapMaxMb = javaHeapMaxMb,
+              nativeHeapMb = nativeHeapMb,
               threadCount = Thread.getAllStackTraces().size,
               openFdCount = readOpenFdCount(),
               gcCount = readGcCount(),
-              gcTimeMs = readGcTimeMs(),
-              appUptimeMs = android.os.SystemClock.elapsedRealtime(),
+              gcTimeMs = gcTimeMs,
+              appUptimeMs = SystemClock.elapsedRealtime(),
               dexClassStat = dexStat,
               classArtifactStat = classArtifactStat,
+              hotClassStats = hotClassStats,
+              termuxSubsystemStats = termuxSubsystemStats,
+              healthAlerts = alerts,
           )
       )
       delay(intervalMs)
@@ -162,14 +221,24 @@ class EditorProcessApmMonitor(
   }
 
   private fun readCpuStat(): CpuStat {
-    val processTokens = File("/proc/self/stat").readText().trim().split(" ")
     val processTicks =
-        (processTokens.getOrNull(13)?.toLongOrNull() ?: 0L) +
-            (processTokens.getOrNull(14)?.toLongOrNull() ?: 0L)
+        runCatching {
+              val processTokens = File("/proc/self/stat").readText().trim().split(" ")
+              (processTokens.getOrNull(13)?.toLongOrNull() ?: 0L) +
+                  (processTokens.getOrNull(14)?.toLongOrNull() ?: 0L)
+            }
+            .getOrElse { Process.getElapsedCpuTime() }
 
-    val systemTokens = File("/proc/stat").readLines().firstOrNull()?.trim()?.split(Regex("\\s+")) ?: emptyList()
-    val systemTicks = systemTokens.drop(1).mapNotNull { it.toLongOrNull() }.sum()
-    return CpuStat(processTicks = processTicks, systemTicks = systemTicks)
+    val systemTicks =
+        runCatching {
+              val systemTokens =
+                  File("/proc/stat").readLines().firstOrNull()?.trim()?.split(Regex("\\s+"))
+                      ?: emptyList()
+              systemTokens.drop(1).mapNotNull { it.toLongOrNull() }.sum()
+            }
+            .getOrElse { SystemClock.elapsedRealtime() }
+
+    return CpuStat(processTicks = processTicks, systemTicks = max(1L, systemTicks))
   }
 
   private fun calcCpuUsage(previous: CpuStat, current: CpuStat): Double {
@@ -178,8 +247,154 @@ class EditorProcessApmMonitor(
     return (processDelta.toDouble() / systemDelta.toDouble()) * 100.0
   }
 
+  private suspend fun readTermuxSubsystemStats(): List<EditorSubsystemStat> {
+    val result =
+        TermuxCommand.run(appContext) {
+          label("APM Process Sample")
+          executable("sh")
+          args("-c", "ps -A -o PID,NAME,%CPU,RSS,ARGS")
+        }
+    if (!result.isSuccess || result.stdout.isBlank()) return emptyList()
+
+    val buckets = linkedMapOf<String, MutableSubsystemAccumulator>()
+    val keywords =
+        linkedMapOf(
+            "Termux Shell" to listOf("termux", "sh", "bash", "zsh"),
+            "Gradle" to listOf("gradle", "gradlew", "daemon"),
+            "Gradle Tooling" to listOf("tooling", "kotlin-daemon"),
+            "JVM" to listOf("java", "openjdk", "dalvikvm"),
+        )
+
+    result.stdout
+        .lineSequence()
+        .drop(1)
+        .forEach { rawLine ->
+          val line = rawLine.trim()
+          if (line.isBlank()) return@forEach
+          val parts = line.split(Regex("\\s+"), limit = 5)
+          if (parts.size < 5) return@forEach
+          val lower = parts[4].lowercase()
+          val cpu = parts[2].toDoubleOrNull() ?: 0.0
+          val rssKb = parts[3].toDoubleOrNull() ?: 0.0
+          keywords.forEach { (bucketName, matches) ->
+            if (matches.any { lower.contains(it) }) {
+              val acc = buckets.getOrPut(bucketName) { MutableSubsystemAccumulator() }
+              acc.processCount += 1
+              acc.totalCpuPercent += cpu
+              acc.totalRssMb += rssKb / 1024.0
+            }
+          }
+        }
+
+    return buckets
+        .map { (name, acc) ->
+          EditorSubsystemStat(
+              name = name,
+              processCount = acc.processCount,
+              totalCpuPercent = acc.totalCpuPercent,
+              totalRssMb = acc.totalRssMb,
+          )
+        }
+        .sortedByDescending { it.totalCpuPercent }
+  }
+
+  private fun buildHealthAlerts(
+      cpuUsagePercent: Double,
+      javaHeapUsedMb: Double,
+      javaHeapMaxMb: Double,
+      gcTimeMs: Long,
+  ): List<String> {
+    val alerts = mutableListOf<String>()
+    if (cpuUsagePercent >= 85.0) alerts += "CPU sustained high load"
+    if (javaHeapMaxMb > 0 && (javaHeapUsedMb / javaHeapMaxMb) >= 0.90) alerts += "OOM risk: Java heap above 90%"
+    if (gcTimeMs >= 200L) alerts += "GC pause elevated"
+    if (alerts.isEmpty()) alerts += "No immediate ANR/OOM signal"
+    return alerts
+  }
+
   private data class CpuStat(
       val processTicks: Long,
       val systemTicks: Long,
+  )
+
+  private class ClassActivityTracker(private val appPackageName: String) {
+    private val stats = LinkedHashMap<String, MutableHotClassStat>()
+
+    fun sample(cpuDeltaMs: Double, memDeltaMb: Double): List<EditorHotClassStat> {
+      val classHits = collectAppClassHits()
+      if (classHits.isEmpty()) {
+        return stats.values
+            .sortedByDescending { it.totalCpuMs }
+            .take(MAX_HOT_CLASSES)
+            .map { it.toSnapshot() }
+      }
+
+      val totalHits = classHits.values.sum().coerceAtLeast(1)
+      classHits.forEach { (className, hits) ->
+        val ratio = hits.toDouble() / totalHits.toDouble()
+        val cpuShare = cpuDeltaMs * ratio
+        val memShare = memDeltaMb * ratio
+        val item =
+            stats.getOrPut(className) {
+              MutableHotClassStat(
+                  className = className,
+                  calls = 0,
+                  totalCpuMs = 0.0,
+                  totalMemMb = 0.0,
+                  peakMemMb = 0.0,
+              )
+            }
+        item.calls += hits
+        item.totalCpuMs += cpuShare
+        item.totalMemMb += memShare
+        item.peakMemMb = max(item.peakMemMb, memShare)
+      }
+
+      return stats.values
+          .sortedByDescending { it.totalCpuMs }
+          .take(MAX_HOT_CLASSES)
+          .map { it.toSnapshot() }
+    }
+
+    private fun collectAppClassHits(): Map<String, Int> {
+      val hits = mutableMapOf<String, Int>()
+      Thread.getAllStackTraces().values.forEach { stack ->
+        val frame = stack.firstOrNull { it.className.startsWith(appPackageName) } ?: return@forEach
+        hits[frame.className] = (hits[frame.className] ?: 0) + 1
+      }
+      return hits
+    }
+  }
+
+  private data class MutableHotClassStat(
+      val className: String,
+      var calls: Int,
+      var totalCpuMs: Double,
+      var totalMemMb: Double,
+      var peakMemMb: Double,
+  ) {
+    fun toSnapshot(): EditorHotClassStat {
+      val avgCpuMs = if (calls > 0) totalCpuMs / calls.toDouble() else 0.0
+      val avgMemMb = if (calls > 0) totalMemMb / calls.toDouble() else 0.0
+      return EditorHotClassStat(
+          className = className,
+          calls = calls,
+          totalCpuMs = totalCpuMs,
+          avgCpuMs = avgCpuMs,
+          totalMemMb = totalMemMb,
+          avgMemMb = avgMemMb,
+          peakMemMb = peakMemMb,
+      )
+    }
+  }
+
+  private companion object {
+    private const val MAX_HOT_CLASSES = 30
+  }
+
+  private data class MutableSubsystemAccumulator(
+      var processCount: Int = 0,
+      var totalCpuPercent: Double = 0.0,
+      var totalRssMb: Double = 0.0,
   )
 }
