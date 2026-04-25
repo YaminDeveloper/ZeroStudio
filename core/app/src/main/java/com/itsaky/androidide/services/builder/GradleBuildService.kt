@@ -378,6 +378,12 @@ class GradleBuildService :
   override fun onBuildSuccessful(result: BuildResult) {
     updateNotification(getString(R.string.build_status_sucess), false)
     eventListener?.onBuildSuccessful(result.tasks)
+    if (result.tasks.any { it.contains("assemble", true) || it.contains("bundle", true) }) {
+      cleanupIdleResources("post-build").exceptionally {
+        log.warn("Post-build runtime cleanup failed", it)
+        false
+      }
+    }
   }
 
   override fun onBuildFailed(result: BuildResult) {
@@ -729,6 +735,44 @@ class GradleBuildService :
     }
 
     return cancellationFuture
+  }
+
+  override fun cleanupIdleResources(trigger: String): CompletableFuture<Boolean> {
+    return CompletableFuture.supplyAsync {
+      if (isBuildInProgress) {
+        log.info("Skip runtime cleanup because a build is in progress. trigger={}", trigger)
+        return@supplyAsync false
+      }
+
+      try {
+        log.info("Running idle runtime cleanup. trigger={}", trigger)
+        eventListener?.onOutput("Running runtime cleanup ($trigger)...")
+
+        stopGradleDaemons().get(8, TimeUnit.SECONDS)
+        killGradlewProcesses()
+        currentBuildProcess?.destroy()
+        currentBuildProcess = null
+
+        try {
+          server?.shutdown()?.get(2, TimeUnit.SECONDS)
+        } catch (e: Throwable) {
+          log.warn("Tooling server shutdown during cleanup failed", e)
+        }
+
+        toolingServerRunner?.release()
+        toolingServerRunner = null
+        server = null
+        isToolingServerStarted = false
+
+        Runtime.getRuntime().gc()
+        System.gc()
+        eventListener?.onOutput("Runtime cleanup completed ($trigger)")
+        true
+      } catch (e: Throwable) {
+        log.error("Runtime cleanup failed. trigger={}", trigger, e)
+        false
+      }
+    }
   }
 
   private fun <T> performBuildTasks(future: CompletableFuture<T>): CompletableFuture<T> {

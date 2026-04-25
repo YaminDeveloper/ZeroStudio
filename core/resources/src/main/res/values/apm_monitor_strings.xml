@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="apm_menu_more">More</string>
+    <string name="apm_menu_clean_gradle_java">Clean Gradle/Java Processes</string>
+    <string name="apm_menu_self_cleanup">In-App Self Cleanup (Pages/LSP/Tooling)</string>
+    <string name="apm_title">APM Real-time Monitor</string>
+    <string name="apm_sampling_desc">Sampling: 1s (Class scan: 15s)</string>
+    <string name="apm_cpu_usage">CPU Usage (%)</string>
+    <string name="apm_process_pss">Process PSS (MB)</string>
+    <string name="apm_metric_rss">RSS</string>
+    <string name="apm_metric_java_heap">Java Heap</string>
+    <string name="apm_metric_native_heap">Native Heap</string>
+    <string name="apm_metric_thread_count">Thread Count</string>
+    <string name="apm_metric_open_fd">Open FD</string>
+    <string name="apm_metric_gc_count">GC Count</string>
+    <string name="apm_metric_gc_time">GC Time</string>
+    <string name="apm_metric_uptime">Uptime</string>
+    <string name="apm_class_loading_stats">Class Loading &amp; Artifacts</string>
+    <string name="apm_dex_total_classes">Dex total classes: %1$d</string>
+    <string name="apm_app_package_classes">App package classes: %1$d</string>
+    <string name="apm_class_file_count">*.class: %1$d</string>
+    <string name="apm_clazz_file_count">*.clazz: %1$d</string>
+    <string name="apm_kt_file_count">*.kt: %1$d</string>
+    <string name="apm_advanced_capabilities">Advanced Monitoring</string>
+    <string name="apm_cpu_apm_desc">CPU/APM: process CPU and hotspot class activity estimation</string>
+    <string name="apm_memory_desc">Memory: RSS/PSS/Java/Native + hotspot class memory delta estimation</string>
+    <string name="apm_gc_desc">GC: count and duration</string>
+    <string name="apm_pressure_high">High</string>
+    <string name="apm_pressure_medium">Medium</string>
+    <string name="apm_pressure_low">Low</string>
+    <string name="apm_pressure_level">Performance pressure: %1$s</string>
+    <string name="apm_hot_class_disclaimer">Hot-class data is estimated from thread-stack sampling and delta attribution. Use it for suspicious module triage, not exact profiling.</string>
+    <string name="apm_alerts_title">ANR/OOM Alerts</string>
+    <string name="apm_subsystem_title">Termux/Gradle/JVM Subsystem Monitor</string>
+    <string name="apm_no_subsystem_data">No subsystem sampling data yet</string>
+    <string name="apm_hot_class_title">Hot-class Activity Tracking (Top 15)</string>
+    <string name="apm_waiting_data">No data yet, waiting for sampling…</string>
+    <string name="apm_chart_min">Min %1$s</string>
+    <string name="apm_chart_now">Now %1$s</string>
+    <string name="apm_chart_max">Max %1$s</string>
+</resources>
