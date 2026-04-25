@@ -27,13 +27,12 @@ import com.itsaky.androidide.projects.FileManager.onDocumentClose
 import com.itsaky.androidide.projects.FileManager.onDocumentContentChange
 import com.itsaky.androidide.projects.FileManager.onDocumentOpen
 import java.util.concurrent.CancellationException
-import java.util.concurrent.LinkedBlockingQueue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.greenrobot.eventbus.EventBus
 import org.slf4j.LoggerFactory
 
@@ -44,7 +43,7 @@ import org.slf4j.LoggerFactory
  */
 class EditorEventDispatcher(var editor: IDEEditor? = null) {
 
-  private val eventQueue = LinkedBlockingQueue<DocumentEvent>()
+  private val eventQueue = Channel<DocumentEvent>(Channel.UNLIMITED)
   private var eventDispatcherJob: Job? = null
 
   companion object {
@@ -56,8 +55,8 @@ class EditorEventDispatcher(var editor: IDEEditor? = null) {
     eventDispatcherJob =
         scope
             .launch(Dispatchers.Default) {
-              while (isActive) {
-                dispatchNextEvent()
+              for (event in eventQueue) {
+                dispatchEvent(event)
               }
             }
             .also {
@@ -70,12 +69,14 @@ class EditorEventDispatcher(var editor: IDEEditor? = null) {
   }
 
   fun dispatch(event: DocumentEvent) {
-    check(eventQueue.offer(event)) { "Failed to dispatch event: $event" }
+    try {
+      eventQueue.trySend(event).getOrThrow()
+    } catch (_: ClosedSendChannelException) {
+      log.debug("Drop event after dispatcher closed: {}", event::class.java.simpleName)
+    }
   }
 
-  private suspend fun dispatchNextEvent() {
-    val event = withContext(Dispatchers.IO) { eventQueue.take() }
-
+  private fun dispatchEvent(event: DocumentEvent) {
     if (editor?.isReleased != false) {
       return
     }
@@ -119,6 +120,7 @@ class EditorEventDispatcher(var editor: IDEEditor? = null) {
 
   fun destroy() {
     editor = null
+    eventQueue.close()
     eventDispatcherJob?.cancel(CancellationException("Cancellation requested"))
   }
 }
